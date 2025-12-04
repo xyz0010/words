@@ -20,7 +20,6 @@ function saveCache(cache: Record<string, string[]>) {
 export async function fetchAiExamples(
   word: string,
   count = 10,
-  devToken?: string,
   opts?: { force?: boolean; hard?: string }
 ): Promise<AiSentenceItem[]> {
   const key = word.toLowerCase();
@@ -31,7 +30,7 @@ export async function fetchAiExamples(
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ word, count, dev_token: devToken, nonce: Date.now(), hard: opts?.hard }),
+    body: JSON.stringify({ word, count, nonce: Date.now(), hard: opts?.hard }),
   });
 
   if (!res.ok) {

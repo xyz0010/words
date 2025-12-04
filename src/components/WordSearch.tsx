@@ -13,8 +13,6 @@ export function WordSearch({ onWordFound }: WordSearchProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [wordData, setWordData] = useState<WordDefinition | null>(null);
-  const [ydKeyInput, setYdKeyInput] = useState<string>(() => localStorage.getItem('YOUDAO_DEV_KEY') || '');
-  const [ydSecretInput, setYdSecretInput] = useState<string>(() => localStorage.getItem('YOUDAO_DEV_SECRET') || '');
   
   const { addWord, removeWord, isInWordbook } = useWordbook();
 
@@ -49,24 +47,6 @@ export function WordSearch({ onWordFound }: WordSearchProps) {
 
   return (
     <div className="w-full max-w-2xl mx-auto">
-      <div className="mb-4 flex items-center gap-2">
-        <input
-          value={ydKeyInput}
-          onChange={(e) => setYdKeyInput(e.target.value)}
-          placeholder="有道 AppKey"
-          className="w-64 px-3 py-2 border rounded"
-        />
-        <input
-          value={ydSecretInput}
-          onChange={(e) => setYdSecretInput(e.target.value)}
-          placeholder="有道 AppSecret"
-          className="w-64 px-3 py-2 border rounded"
-        />
-        <button
-          onClick={() => { localStorage.setItem('YOUDAO_DEV_KEY', ydKeyInput.trim()); localStorage.setItem('YOUDAO_DEV_SECRET', ydSecretInput.trim()); setError(''); }}
-          className="px-3 py-2 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
-        >保存</button>
-      </div>
       <form onSubmit={handleSearch} className="mb-6">
         <div className="relative">
           <input

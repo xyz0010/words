@@ -27,8 +27,6 @@ export function TypingPractice({ startWord }: TypingPracticeProps) {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
   const [aiSentence, setAiSentence] = useState('');
-  const [devToken, setDevToken] = useState<string>(() => localStorage.getItem('COZE_DEV_TOKEN') || '');
-  const [devTokenInput, setDevTokenInput] = useState<string>(devToken);
   const [aiPack, setAiPack] = useState<AiSentenceItem[]>([]);
   const [aiIndex, setAiIndex] = useState(0);
   const [attemptCounts, setAttemptCounts] = useState<number[]>([]);
@@ -67,15 +65,11 @@ export function TypingPractice({ startWord }: TypingPracticeProps) {
 
   async function loadAiSentences(stage?: number) {
     if (!current) return;
-    if (!devToken) {
-      setAiError('请先在下方设置AI token');
-      return;
-    }
     setAiLoading(true);
     setAiError('');
     try {
       const useStage = stage ?? scenarioStage;
-      const sents = await fetchAiExamples(current.word, 10, devToken, { force: true, hard: SCENARIOS[useStage % SCENARIOS.length] });
+      const sents = await fetchAiExamples(current.word, 10, { force: true, hard: SCENARIOS[useStage % SCENARIOS.length] });
       console.log('AI sentences:', sents);
       const first = sents[0]?.sentence || '';
       const firstZh = sents[0]?.translation || '';
@@ -438,22 +432,6 @@ export function TypingPractice({ startWord }: TypingPracticeProps) {
                 {type.label}
               </button>
             ))}
-          </div>
-          
-          {/* AI Token Input (Compact) */}
-          <div className="relative group">
-             <input
-                value={devTokenInput}
-                onChange={(e) => setDevTokenInput(e.target.value)}
-                placeholder="AI Token"
-                className="w-24 focus:w-48 transition-all px-3 py-1.5 text-sm border border-gray-200 rounded-md outline-none focus:border-blue-400"
-              />
-              <button
-                onClick={() => { setDevToken(devTokenInput.trim()); localStorage.setItem('COZE_DEV_TOKEN', devTokenInput.trim()); setAiError(''); }}
-                className="absolute right-1 top-1/2 -translate-y-1/2 p-1 text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity"
-              >
-                ✓
-              </button>
           </div>
         </div>
 
