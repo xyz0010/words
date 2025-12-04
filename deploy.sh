@@ -48,8 +48,18 @@ echo "[4/4] 正在启动服务..."
 # 停止旧容器
 docker stop words-container 2>/dev/null || true
 docker rm words-container 2>/dev/null || true
+
+# 检查是否存在 .env 文件
+ENV_ARGS=""
+if [ -f .env ]; then
+  echo "发现 .env 文件，将加载环境变量..."
+  # 使用 --env-file 选项 (Docker v20.10+)
+  ENV_ARGS="--env-file .env"
+fi
+
 # 启动新容器
-docker run -d -p 80:80 --name words-container --restart always words-app
+# 如果 Docker 版本太旧不支持 --env-file，可以手动 source .env 并使用 -e
+docker run -d -p 80:80 --name words-container --restart always $ENV_ARGS words-app
 
 echo "=========================================="
 echo "   ✅ 部署成功！"
