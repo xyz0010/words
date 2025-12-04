@@ -151,7 +151,7 @@ export function TypingPractice({ startWord }: TypingPracticeProps) {
   // const onSubmit = async () => { ... } // Removed
 
   const proceedToNextSentence = async () => {
-
+    if (aiLoading) return;
     const nextIdx = aiIndex + 1;
     if (nextIdx < aiPack.length) {
       setAiIndex(nextIdx);
@@ -467,10 +467,11 @@ export function TypingPractice({ startWord }: TypingPracticeProps) {
           
           <button 
             onClick={() => void proceedToNextSentence()} 
-            className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-md hover:shadow-lg transition-all text-sm font-medium"
+            disabled={aiLoading}
+            className={`flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-md hover:shadow-lg transition-all text-sm font-medium ${aiLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
-            <span>下一题</span>
-            <SkipForward className="w-4 h-4" />
+            <span>{aiLoading ? '加载中...' : '下一题'}</span>
+            {!aiLoading && <SkipForward className="w-4 h-4" />}
           </button>
         </div>
       </div>

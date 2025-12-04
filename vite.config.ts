@@ -1,7 +1,6 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tsconfigPaths from "vite-tsconfig-paths";
-import { traeBadgePlugin } from 'vite-plugin-trae-solo-badge';
 import type { Plugin } from 'vite';
 import crypto from 'node:crypto';
 
@@ -298,15 +297,6 @@ export default defineConfig(({ mode }) => {
           'react-dev-locator',
         ],
       },
-    }), 
-    traeBadgePlugin({
-      variant: 'dark',
-      position: 'bottom-right',
-      prodOnly: true,
-      clickable: true,
-      clickUrl: 'https://www.trae.ai/solo?showJoin=1',
-      autoTheme: true,
-      autoThemeTarget: '#root'
     }), 
     youdaoTranslatePlugin(env),
     cozeExamplesPlugin(env),
