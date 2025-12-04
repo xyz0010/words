@@ -1,0 +1,22 @@
+name: Auto Deploy to Aliyun ECS
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          script: |
+            # 确保脚本可执行
+            chmod +x /opt/words/deploy.sh
+            # 执行部署脚本
+            # 注意：这里假设 deploy.sh 会处理 git pull 和 docker rebuild
+            /opt/words/deploy.sh
