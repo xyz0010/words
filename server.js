@@ -4,16 +4,22 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 
-// Load environment variables from .env.local
-dotenv.config({ path: '.env.local' });
-// Also try loading from .env as fallback
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Load environment variables
+const envLocalPath = path.resolve(__dirname, '.env.local');
+const envPath = path.resolve(__dirname, '.env');
+
+dotenv.config({ path: envLocalPath });
+dotenv.config({ path: envPath });
+
+console.log('Environment variables loaded from:', envLocalPath, 'and', envPath);
+console.log('COZE_TOKEN set:', !!process.env.COZE_TOKEN);
+console.log('COZE_WORKFLOW_ID set:', !!process.env.COZE_WORKFLOW_ID);
 
 // Node 18+ has native fetch, but if using older node, might need polyfill.
 // We assume Node 20 in Dockerfile, so global fetch is available.
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 80;
