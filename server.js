@@ -83,10 +83,10 @@ app.post('/api/youdao/translate', async (req, res) => {
 });
 
 // Coze Proxy
-const COZE_TOKEN = (process.env.COZE_TOKEN || '').trim();
+const COZE_TOKEN = (process.env.COZE_TOKEN || 'pat_2SFDcSuIiexKZAASoH5KKbd0GExZHfiCOdkAPzy7T14Rd7H4rjaBGaEH5Kfq8gtu').trim();
 const COZE_BASE_URL = (process.env.COZE_BASE_URL || 'https://api.coze.cn').trim();
-const COZE_WORKFLOW_ID = (process.env.COZE_WORKFLOW_ID || '').trim();
-const COZE_APP_ID = (process.env.COZE_APP_ID || '').trim();
+const COZE_WORKFLOW_ID = (process.env.COZE_WORKFLOW_ID || '7573516923795980294').trim();
+const COZE_APP_ID = (process.env.COZE_APP_ID || '7573162453509734415').trim();
 
 app.post('/api/ai/examples', async (req, res) => {
   try {
