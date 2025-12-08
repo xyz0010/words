@@ -1,67 +1,39 @@
 #!/bin/bash
 
-# 遇到错误立即退出
-set -e
+# 容器名称
+CONTAINER_NAME="words-app"
+# 镜像名称
+IMAGE_NAME="words-image"
 
-echo "=========================================="
-echo "   开始部署 Words 应用到阿里云 ECS"
-echo "=========================================="
+echo "=== 开始自动部署 ==="
 
-# 1. 检查并安装 Docker
-if ! command -v docker &> /dev/null; then
-    echo "[1/4] 检测到未安装 Docker，正在自动安装..."
-    if [ -f /etc/debian_version ]; then
-        # Debian/Ubuntu
-        apt-get update
-        apt-get install -y docker.io git
-    elif [ -f /etc/redhat-release ]; then
-        # CentOS/Alibaba Cloud Linux
-        yum install -y docker git
-        systemctl start docker
-        systemctl enable docker
-    else
-        echo "错误: 无法自动识别操作系统，请手动安装 Docker 和 Git。"
-        exit 1
-    fi
-else
-    echo "[1/4] Docker 已安装，跳过安装步骤。"
+# 1. 拉取最新代码
+echo "[1/4] 正在拉取最新代码..."
+git pull origin main
+
+# 2. 构建新镜像
+echo "[2/4] 正在构建 Docker 镜像..."
+docker build -t $IMAGE_NAME .
+
+# 3. 停止并删除旧容器
+echo "[3/4] 正在清理旧容器..."
+# 检查容器是否在运行
+if [ "$(docker ps -q -f name=$CONTAINER_NAME)" ]; then
+    echo "停止运行中的容器..."
+    docker stop $CONTAINER_NAME
+fi
+# 检查容器是否存在（即使已停止）
+if [ "$(docker ps -aq -f name=$CONTAINER_NAME)" ]; then
+    echo "删除旧容器..."
+    docker rm $CONTAINER_NAME
 fi
 
-# 2. 准备代码目录
-WORK_DIR="/opt/words"
-if [ -d "$WORK_DIR" ]; then
-    echo "[2/4] 检测到项目目录已存在，正在更新代码..."
-    cd "$WORK_DIR"
-    git pull origin main
-else
-    echo "[2/4] 正在克隆代码仓库..."
-    git clone https://github.com/xyz0010/words.git "$WORK_DIR"
-    cd "$WORK_DIR"
-fi
+# 4. 启动新容器
+echo "[4/4] 正在启动新容器..."
+# -d: 后台运行
+# -p 80:80: 映射端口 (如果你的服务器端口不是80，请修改这里)
+# --name: 指定容器名称
+docker run -d -p 80:80 --name $CONTAINER_NAME $IMAGE_NAME
 
-# 3. 构建 Docker 镜像
-echo "[3/4] 正在构建 Docker 镜像 (这可能需要几分钟)..."
-docker build -t words-app .
-
-# 4. 运行容器
-echo "[4/4] 正在启动服务..."
-# 停止旧容器
-docker stop words-container 2>/dev/null || true
-docker rm words-container 2>/dev/null || true
-
-# 检查是否存在 .env 文件
-ENV_ARGS=""
-if [ -f .env ]; then
-  echo "发现 .env 文件，将加载环境变量..."
-  # 使用 --env-file 选项 (Docker v20.10+)
-  ENV_ARGS="--env-file .env"
-fi
-
-# 启动新容器
-# 如果 Docker 版本太旧不支持 --env-file，可以手动 source .env 并使用 -e
-docker run -d -p 80:80 --name words-container --restart always $ENV_ARGS words-app
-
-echo "=========================================="
-echo "   ✅ 部署成功！"
-echo "   请在浏览器访问您的服务器 IP 地址。"
-echo "=========================================="
+echo "=== 部署完成！ ==="
+echo "你可以使用 'docker logs $CONTAINER_NAME' 查看运行日志"
