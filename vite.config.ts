@@ -37,7 +37,7 @@ function cozeExamplesPlugin(env: Record<string, string>): Plugin {
               return res.end(JSON.stringify({ error: 'word_required' }));
             }
             const useToken = devToken || COZE_TOKEN;
-            if (!useToken || !COZE_WORKFLOW_ID || !COZE_APP_ID) {
+            if (!useToken || !COZE_WORKFLOW_ID) {
               res.statusCode = 200;
               res.setHeader('Content-Type', 'application/json');
               return res.end(JSON.stringify({ sentences: [], source: 'env_missing' }));
@@ -64,7 +64,6 @@ JSON 结构如下：
               },
               body: JSON.stringify({
                 workflow_id: COZE_WORKFLOW_ID,
-                app_id: COZE_APP_ID,
                 parameters: { input: prompt, nonce, hard },
               }),
             });
@@ -201,7 +200,19 @@ JSON 结构如下：
             res.statusCode = 200;
             res.setHeader('Content-Type', 'application/json');
             const masked = (s: string) => (s.length > 12 ? `${s.slice(0,6)}...${s.slice(-6)}` : s);
-            return res.end(JSON.stringify({ sentences, source: 'coze', latestContent, raw, debug: { url, app: COZE_APP_ID, workflow: COZE_WORKFLOW_ID, token_head: masked(useToken) } }));
+            return res.end(JSON.stringify({
+              sentences,
+              source: 'coze',
+              latestContent,
+              raw,
+              debug: {
+                url,
+                workflow: COZE_WORKFLOW_ID,
+                token_head: masked(useToken),
+                status: resp.status,
+                statusText: resp.statusText
+              }
+            }));
           } catch {
             res.statusCode = 200;
             res.setHeader('Content-Type', 'application/json');
@@ -214,8 +225,6 @@ JSON 结构如下：
 }
 
 function youdaoTranslatePlugin(env: Record<string, string>): Plugin {
-  const APP_KEY = (env.YOUDAO_APP_KEY || '').trim();
-  const APP_SECRET = (env.YOUDAO_APP_SECRET || '').trim();
   return {
     name: 'youdao-translate-proxy',
     configureServer(server) {
@@ -227,52 +236,52 @@ function youdaoTranslatePlugin(env: Record<string, string>): Plugin {
           try {
             const payload = JSON.parse(body || '{}');
             const q = String(payload.q || '').trim();
-            const from = String(payload.from || 'en');
-            const to = String(payload.to || 'zh-CHS');
-            const devKey = typeof payload.devKey === 'string' ? payload.devKey.trim() : '';
-            const devSecret = typeof payload.devSecret === 'string' ? payload.devSecret.trim() : '';
             if (!q) {
               res.statusCode = 400;
               res.setHeader('Content-Type', 'application/json');
               return res.end(JSON.stringify({ error: 'q_required' }));
             }
-            const useKey = devKey || APP_KEY;
-            const useSecret = devSecret || APP_SECRET;
-            if (!useKey || !useSecret) {
-              res.statusCode = 200;
-              res.setHeader('Content-Type', 'application/json');
-              return res.end(JSON.stringify({ translation: '', source: 'env_missing' }));
-            }
-            const salt = crypto.randomUUID();
-            const curtime = Math.floor(Date.now() / 1000).toString();
-            const input = q.length > 20 ? `${q.slice(0,10)}${q.length}${q.slice(-10)}` : q;
-            const signStr = `${useKey}${input}${salt}${curtime}${useSecret}`;
-            const sign = crypto.createHash('sha256').update(signStr).digest('hex');
-            const params = new URLSearchParams({
-              q,
-              from,
-              to,
-              appKey: useKey,
-              salt,
-              sign,
-              signType: 'v3',
-              curtime,
-              strict: 'true',
-            });
-            const resp = await fetch('https://openapi.youdao.com/api', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: params.toString(),
+            
+            // Switch to Youdao Web API for better dictionary data
+            const apiUrl = `http://dict.youdao.com/jsonapi?q=${encodeURIComponent(q)}`;
+            console.log(`Proxying to: ${apiUrl}`);
+            
+            const resp = await fetch(apiUrl, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
             });
             const data = await resp.json();
+            console.log('Youdao Web API Response for:', q);
+            // console.log(JSON.stringify(data, null, 2));
+
             let translation = '';
-            if (Array.isArray(data?.translation) && data.translation.length > 0) {
-              translation = String(data.translation[0] || '');
+            // Try to extract basic translation from 'ec' (English-Chinese)
+            try {
+                const trs = data.ec?.word?.[0]?.trs?.[0]?.tr?.[0]?.l?.i?.[0];
+                if (trs) translation = trs;
+            } catch {}
+
+            // Fallback to 'simple'
+            if (!translation && data.simple?.word?.[0]?.return_phrase) {
+               // translation = data.simple.word[0].return_phrase; 
             }
+
+            // Fallback to 'web_trans'
+            if (!translation && data.web_trans?.['web-translation']?.[0]?.trans?.[0]?.value) {
+                translation = data.web_trans['web-translation'][0].trans[0].value;
+            }
+            
+            // Fallback to 'fanyi' translation if available
+            if (!translation && data.fanyi?.tran) {
+                translation = data.fanyi.tran;
+            }
+
             res.statusCode = 200;
             res.setHeader('Content-Type', 'application/json');
-            return res.end(JSON.stringify({ translation, raw: data, source: 'youdao' }));
-          } catch {
+            return res.end(JSON.stringify({ translation, raw: data, source: 'youdao_web' }));
+          } catch (e) {
+            console.error('Proxy Error:', e);
             res.statusCode = 200;
             res.setHeader('Content-Type', 'application/json');
             return res.end(JSON.stringify({ translation: '', source: 'internal_error' }));

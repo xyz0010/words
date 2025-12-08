@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useWordbook } from '../context/WordbookContext';
 import { translateToChinese } from '../services/translate';
-import { Volume2, X, SkipForward, Lightbulb } from 'lucide-react';
+import { Volume2, X, SkipForward, Lightbulb, Loader2 } from 'lucide-react';
 import { fetchAiExamples, AiSentenceItem } from '../services/aiExamples';
+import { WordDefinition } from '../types/word';
 
 function normalizeApostrophes(s: string) {
   return s.replace(/[’‘ʼ`＇]/g, "'");
@@ -10,9 +11,10 @@ function normalizeApostrophes(s: string) {
 
 interface TypingPracticeProps {
   startWord?: string;
+  initialWordData?: WordDefinition;
 }
 
-export function TypingPractice({ startWord }: TypingPracticeProps) {
+export function TypingPractice({ startWord, initialWordData }: TypingPracticeProps) {
   const { state } = useWordbook();
   const [index, setIndex] = useState(0);
   const [question, setQuestion] = useState('');
@@ -34,6 +36,8 @@ export function TypingPractice({ startWord }: TypingPracticeProps) {
   const [hintCount, setHintCount] = useState<number>(1);
   const loadAiSentencesRef = useRef(loadAiSentences);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  // Key format: "word-stage" to prevent duplicate loads for same word+stage combo
+  const lastLoadedKeyRef = useRef<string>('');
   const [scenarioStage, setScenarioStage] = useState(0);
   const SCENARIOS = ['日常沟通', '社交互动', '休闲娱乐'];
 
@@ -44,9 +48,20 @@ export function TypingPractice({ startWord }: TypingPracticeProps) {
     { id: 'bubble', label: '气泡' },
     { id: 'mute', label: '静音' },
   ] as const;
-  
 
-  const current = useMemo(() => state.words[index], [state.words, index]);
+  const handlePrev = () => {
+    setIndex((prev) => Math.max(0, prev - 1));
+  };
+
+  const handleNext = () => {
+    setIndex((prev) => Math.min(state.words.length - 1, prev + 1));
+  };
+
+  const current = useMemo(() => {
+    if (initialWordData) return initialWordData;
+    return state.words[index];
+  }, [state.words, index, initialWordData]);
+  
   const example = useMemo(() => {
     if (!current) return '';
     for (const m of current.meanings) {
@@ -108,6 +123,7 @@ export function TypingPractice({ startWord }: TypingPracticeProps) {
     setChecking(false);
     setShowAnswer(false);
     setScenarioStage(0);
+    // Note: We don't reset lastLoadedKeyRef here because we want to prevent re-loading same word if it mounts twice
     const load = async () => {
       const base = example || current?.word || '';
       const zh = await translateToChinese(base);
@@ -138,15 +154,34 @@ export function TypingPractice({ startWord }: TypingPracticeProps) {
     if (idx >= 0) {
       setIndex(idx);
     }
+    // 如果找不到 idx (即 -1)，而 initialWordData 存在，current 会正确取值，index 保持 0 也无所谓（因为 current 计算时忽略了 index）
   }, [startWord, state.words]);
 
   useEffect(() => {
+    // Single word mode (via initialWordData)
+    if (initialWordData) {
+      if (!aiLoading && aiPack.length === 0) {
+        const key = `${initialWordData.word}-${scenarioStage}`;
+        if (lastLoadedKeyRef.current !== key) {
+            lastLoadedKeyRef.current = key;
+            loadAiSentencesRef.current(scenarioStage);
+        }
+      }
+      return;
+    }
+
+    // Wordbook mode
     if (!startWord) return;
     if (!current) return;
     if (current.word.toLowerCase() !== startWord.toLowerCase()) return;
     if (aiPack.length > 0 || aiLoading) return;
-    loadAiSentencesRef.current(scenarioStage);
-  }, [startWord, current, aiPack.length, aiLoading, scenarioStage]);
+    
+    const key = `${current.word}-${scenarioStage}`;
+    if (lastLoadedKeyRef.current !== key) {
+        lastLoadedKeyRef.current = key;
+        loadAiSentencesRef.current(scenarioStage);
+    }
+  }, [startWord, current, aiPack.length, aiLoading, scenarioStage, initialWordData]);
 
   // const onSubmit = async () => { ... } // Removed
 
@@ -272,7 +307,27 @@ export function TypingPractice({ startWord }: TypingPracticeProps) {
   return (
     <div className="w-full max-w-4xl mx-auto px-4">
       {/* Top Header Area */}
-      <div className="flex items-center justify-end mb-6">
+      <div className="flex items-center justify-between mb-6">
+          <div className="flex gap-2">
+            {!initialWordData && (
+              <>
+                <button
+                  onClick={handlePrev}
+                  disabled={index === 0}
+                  className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${index === 0 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
+                >
+                  上一个
+                </button>
+                <button
+                  onClick={handleNext}
+                  disabled={index === state.words.length - 1}
+                  className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${index === state.words.length - 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
+                >
+                  下一个
+                </button>
+              </>
+            )}
+          </div>
           <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-full text-sm font-medium">
             <span>场景：</span>
             <span>{SCENARIOS[scenarioStage]}</span>
@@ -281,8 +336,16 @@ export function TypingPractice({ startWord }: TypingPracticeProps) {
 
       {/* Main Practice Card */}
       <div className="bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100 mb-8" onClick={() => inputRef.current?.focus()}>
-        {/* Question Section */}
-        <div className="bg-slate-50 px-8 py-10 text-center border-b border-slate-100">
+        {aiLoading ? (
+          <div className="flex flex-col items-center justify-center min-h-[400px] text-slate-500 space-y-4">
+            <Loader2 className="w-12 h-12 text-blue-500 animate-spin" />
+            <div className="text-lg font-medium">AI 正在生成例句...</div>
+            <div className="text-sm text-slate-400">这可能需要几秒钟</div>
+          </div>
+        ) : (
+          <>
+            {/* Question Section */}
+            <div className="bg-slate-50 px-8 py-10 text-center border-b border-slate-100">
           <h2 className="text-2xl md:text-3xl text-slate-800 font-medium leading-relaxed mb-3">
             {question}
           </h2>
@@ -379,7 +442,16 @@ export function TypingPractice({ startWord }: TypingPracticeProps) {
                           }
                         }}
                         onKeyDown={(e) => {
-                          if (/^[1-9]$/.test(e.key)) {
+                          // Handle hint shortcut: Press '1' to reveal current word hint ONLY (no auto-fill)
+                          if (e.key === '1') {
+                            e.preventDefault();
+                            setRevealHints(prev => prev.map((hint, idx) => idx === i ? true : hint));
+                            // Ensure the word is not locked so user can type
+                            setLockedWords(prev => prev.map((locked, idx) => idx === i ? false : locked));
+                            return;
+                          }
+
+                          if (/^[2-9]$/.test(e.key)) {
                             e.preventDefault();
                             applyRandomHints(parseInt(e.key, 10));
                             return;
@@ -415,6 +487,8 @@ export function TypingPractice({ startWord }: TypingPracticeProps) {
                )}
             </div>
         </div>
+          </>
+        )}
       </div>
 
       {/* Footer Controls Area */}

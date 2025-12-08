@@ -1,7 +1,16 @@
 export interface WordDefinition {
   word: string;
   phonetic?: string;
+  audio?: {
+    us?: string;
+    uk?: string;
+  };
   meanings: Meaning[];
+  wfs?: string[];
+  examples?: {
+    sentence: string;
+    translation: string;
+  }[];
   dateAdded?: string;
 }
 
