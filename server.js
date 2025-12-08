@@ -2,6 +2,12 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import dotenv from 'dotenv';
+
+// Load environment variables from .env.local
+dotenv.config({ path: '.env.local' });
+// Also try loading from .env as fallback
+dotenv.config();
 
 // Node 18+ has native fetch, but if using older node, might need polyfill.
 // We assume Node 20 in Dockerfile, so global fetch is available.
