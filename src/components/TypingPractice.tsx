@@ -4,6 +4,8 @@ import { translateToChinese } from '../services/translate';
 import { Volume2, X, SkipForward, Lightbulb, Loader2 } from 'lucide-react';
 import { fetchAiExamples, AiSentenceItem } from '../services/aiExamples';
 import { WordDefinition } from '../types/word';
+import { WordDetailModal } from './WordDetailModal';
+import confetti from 'canvas-confetti';
 
 function normalizeApostrophes(s: string) {
   return s.replace(/[’‘ʼ`＇]/g, "'");
@@ -17,6 +19,13 @@ interface TypingPracticeProps {
 export function TypingPractice({ startWord, initialWordData }: TypingPracticeProps) {
   const { state } = useWordbook();
   const [index, setIndex] = useState(0);
+  
+  // 统一计算练习单词列表：如果有 initialWordData 则只练这一个，否则练习单词本所有单词
+  const practiceWords = useMemo(() => {
+    if (initialWordData) return [initialWordData];
+    return state.words;
+  }, [initialWordData, state.words]);
+
   const [question, setQuestion] = useState('');
   const [checking, setChecking] = useState(false);
   const [showAnswer, setShowAnswer] = useState(false);
@@ -41,6 +50,8 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
   const [scenarioStage, setScenarioStage] = useState(0);
   const SCENARIOS = ['日常沟通', '社交互动', '休闲娱乐'];
 
+  const [selectedWord, setSelectedWord] = useState<string | null>(null);
+
   const [soundType, setSoundType] = useState<'mechanical' | 'typewriter' | 'bubble' | 'mute'>('mechanical');
   const SOUND_TYPES = [
     { id: 'mechanical', label: '机械' },
@@ -54,13 +65,10 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
   };
 
   const handleNext = () => {
-    setIndex((prev) => Math.min(state.words.length - 1, prev + 1));
+    setIndex((prev) => Math.min(practiceWords.length - 1, prev + 1));
   };
 
-  const current = useMemo(() => {
-    if (initialWordData) return initialWordData;
-    return state.words[index];
-  }, [state.words, index, initialWordData]);
+  const current = practiceWords[index];
   
   const example = useMemo(() => {
     if (!current) return '';
@@ -150,38 +158,29 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
 
   useEffect(() => {
     if (!startWord) return;
-    const idx = state.words.findIndex(w => w.word.toLowerCase() === startWord.toLowerCase());
+    const idx = practiceWords.findIndex(w => w.word.toLowerCase() === startWord.toLowerCase());
     if (idx >= 0) {
       setIndex(idx);
     }
-    // 如果找不到 idx (即 -1)，而 initialWordData 存在，current 会正确取值，index 保持 0 也无所谓（因为 current 计算时忽略了 index）
-  }, [startWord, state.words]);
+  }, [startWord, practiceWords]);
 
   useEffect(() => {
-    // Single word mode (via initialWordData)
-    if (initialWordData) {
-      if (!aiLoading && aiPack.length === 0) {
-        const key = `${initialWordData.word}-${scenarioStage}`;
-        if (lastLoadedKeyRef.current !== key) {
-            lastLoadedKeyRef.current = key;
-            loadAiSentencesRef.current(scenarioStage);
-        }
-      }
-      return;
-    }
-
-    // Wordbook mode
-    if (!startWord) return;
+    // 无论是单个单词模式还是单词本模式，都使用统一的加载逻辑
     if (!current) return;
-    if (current.word.toLowerCase() !== startWord.toLowerCase()) return;
-    if (aiPack.length > 0 || aiLoading) return;
+    if (aiLoading) return;
     
+    // 如果当前已有 AI 例句包且就是当前词的，不需要重新加载
+    // 但这里简化处理：只要切换了词（key 变化），就加载
     const key = `${current.word}-${scenarioStage}`;
+    
+    // 如果是同一个词同一个场景，且已经有数据了，就不重新加载
+    if (lastLoadedKeyRef.current === key && aiPack.length > 0) return;
+
     if (lastLoadedKeyRef.current !== key) {
         lastLoadedKeyRef.current = key;
         loadAiSentencesRef.current(scenarioStage);
     }
-  }, [startWord, current, aiPack.length, aiLoading, scenarioStage, initialWordData]);
+  }, [startWord, current, aiPack.length, aiLoading, scenarioStage]);
 
   // const onSubmit = async () => { ... } // Removed
 
@@ -296,6 +295,32 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aiSentence, example]); // specific dependencies for auto-play trigger
 
+  // 监听 Enter 键进入下一题（仅在展示答案/完成状态下）
+  useEffect(() => {
+    if (!showAnswer) return;
+    
+    let canProceed = false;
+    // 延迟开启“下一题”的交互，防止 Enter 连击导致直接跳过，同时也给用户时间看清烟花和例句
+    const timer = setTimeout(() => {
+      canProceed = true;
+    }, 1500); // 1.5秒冷却时间
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (canProceed) {
+          void proceedToNextSentence();
+        }
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      clearTimeout(timer);
+    };
+  }, [showAnswer, proceedToNextSentence]);
+
   if (!current) {
     return (
       <div className="text-center py-12 text-gray-500">
@@ -307,28 +332,44 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
   return (
     <div className="w-full max-w-4xl mx-auto px-4">
       {/* Top Header Area */}
-      <div className="flex items-center justify-between mb-6">
-          <div className="flex gap-2">
-            {!initialWordData && (
-              <>
-                <button
-                  onClick={handlePrev}
-                  disabled={index === 0}
-                  className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${index === 0 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
-                >
-                  上一个
-                </button>
-                <button
-                  onClick={handleNext}
-                  disabled={index === state.words.length - 1}
-                  className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${index === state.words.length - 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
-                >
-                  下一个
-                </button>
-              </>
-            )}
+      <div className="flex items-center justify-between mb-6 gap-4">
+          <div className="flex items-center gap-3 shrink-0">
+              {practiceWords.length > 1 && (
+                <span className="text-sm text-gray-500 font-medium bg-gray-100 px-3 py-1 rounded-full">
+                  单词进度：{index + 1} / {practiceWords.length}
+                </span>
+              )}
           </div>
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-full text-sm font-medium">
+
+          {/* Progress Dots - Center (Sentence Progress) */}
+          <div className="flex-1 max-w-md mx-4 flex justify-center">
+             {aiPack.length > 0 ? (
+               <div className="flex items-center gap-2">
+                 {aiPack.map((_, idx) => (
+                   <div
+                     key={idx}
+                     className={`
+                       w-2.5 h-2.5 rounded-full transition-all duration-300
+                       ${idx === aiIndex 
+                         ? 'bg-blue-600 scale-125 shadow-sm' 
+                         : idx < aiIndex 
+                           ? 'bg-blue-300' 
+                           : 'bg-gray-200'
+                       }
+                     `}
+                   />
+                 ))}
+               </div>
+             ) : (
+               <div className="flex items-center gap-2 animate-pulse">
+                 {[...Array(5)].map((_, i) => (
+                   <div key={i} className="w-2.5 h-2.5 rounded-full bg-gray-200" />
+                 ))}
+               </div>
+             )}
+          </div>
+
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-full text-sm font-medium shrink-0">
             <span>场景：</span>
             <span>{SCENARIOS[scenarioStage]}</span>
           </div>
@@ -358,8 +399,13 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
         <div className="p-8 md:p-12 bg-white min-h-[200px] flex flex-col items-center justify-center">
             <div className="w-full">
                {showAnswer ? (
-                  <div className="text-2xl md:text-3xl text-center text-blue-600 font-medium leading-relaxed">
-                    {expectedWords.join(' ') || current.word}
+                  <div className="text-center animate-in fade-in zoom-in duration-300">
+                    <div className="text-2xl md:text-3xl text-blue-600 font-medium leading-relaxed mb-4">
+                      {expectedWords.join(' ') || current.word}
+                    </div>
+                    <div className="text-sm text-gray-400 animate-in fade-in duration-1000 delay-1000 fill-mode-forwards opacity-0" style={{ animationDelay: '1.5s', animationFillMode: 'forwards' }}>
+                      按 Enter 进入下一题
+                    </div>
                   </div>
                ) : (
                  <div className="flex flex-wrap items-end justify-center gap-x-3 gap-y-6 leading-loose">
@@ -376,8 +422,7 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
                       <div 
                         className={`
                           absolute bottom-0 left-0 right-0 h-[2px] transition-colors duration-300
-                          ${focusedIndex === i ? 'bg-blue-500' : 'bg-slate-200'}
-                          ${shakeWords[i] ? 'bg-red-500' : ''}
+                          ${shakeWords[i] ? 'bg-red-500' : (revealHints[i] ? 'bg-red-400' : (focusedIndex === i ? 'bg-blue-500' : 'bg-slate-200'))}
                         `}
                       />
                       
@@ -395,7 +440,13 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
                       </div>
                       
                       {revealHints[i] && (
-                        <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-blue-400 tracking-wider uppercase pointer-events-none animate-fade-in-up">
+                        <div 
+                          className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-red-500 tracking-wider uppercase cursor-pointer animate-fade-in-up hover:text-red-600 underline decoration-dotted underline-offset-4"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedWord(w);
+                          }}
+                        >
                           {w}
                         </div>
                       )}
@@ -469,7 +520,13 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
                               return x === y && x.length === y.length;
                             });
                             if (allCorrect) {
-                              proceedToNextSentence();
+                              confetti({
+                                particleCount: 100,
+                                spread: 70,
+                                origin: { y: 0.6 }
+                              });
+                              setShowAnswer(true);
+                              speak();
                             } else {
                               setChecking(true);
                               setWasWrong(true);
@@ -554,6 +611,12 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
       <div className="text-center mt-6 text-xs text-gray-400">
         快捷键：Enter 提交 / 下一题 &middot; 数字键 1-9 提示 &middot; Space 播放发音
       </div>
+
+      <WordDetailModal 
+        word={selectedWord || ''}
+        isOpen={!!selectedWord}
+        onClose={() => setSelectedWord(null)}
+      />
     </div>
   );
 }

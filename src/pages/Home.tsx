@@ -1,13 +1,12 @@
 import { WordSearch } from '../components/WordSearch';
 import { WordbookManager } from '../components/WordbookManager';
-import { BookOpen, Search as SearchIcon, Keyboard } from 'lucide-react';
+import { BookOpen, Search as SearchIcon } from 'lucide-react';
 import { useState } from 'react';
-import { WordDefinition } from '../types/word';
-import { TypingPractice } from '../components/TypingPractice';
+import { useNavigate } from 'react-router-dom';
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'search' | 'wordbook' | 'typing'>('search');
-  const [practiceTarget, setPracticeTarget] = useState<WordDefinition | null>(null);
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState<'search' | 'wordbook'>('search');
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -55,21 +54,13 @@ export default function Home() {
               </div>
               <WordSearch />
             </div>
-          ) : activeTab === 'wordbook' ? (
+          ) : (
             <div className="space-y-8">
               <div className="text-center">
                 <h2 className="text-2xl font-semibold text-gray-800 mb-4">单词本管理</h2>
                 <p className="text-gray-600">查看、筛选和导出您收藏的单词</p>
               </div>
-              <WordbookManager onPracticeWord={(word) => { setPracticeTarget(word); setActiveTab('typing'); }} />
-            </div>
-          ) : (
-            <div className="space-y-8">
-              <div className="text-center">
-                <h2 className="text-2xl font-semibold text-gray-800 mb-4">{practiceTarget?.word || '打字练习'}</h2>
-                <p className="text-gray-600">{practiceTarget?.phonetic || '根据中文提示输入英文单词，回车提交'}</p>
-              </div>
-              <TypingPractice startWord={practiceTarget?.word || undefined} />
+              <WordbookManager onPracticeWord={(word) => navigate('/practice', { state: { initialWord: word.word } })} />
             </div>
           )}
         </main>
