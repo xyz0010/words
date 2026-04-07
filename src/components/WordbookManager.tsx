@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { WordDefinition } from '../types/word';
 import { useWordbook } from '../context/WordbookContext';
-import { Download, Filter, X, MessageSquare } from 'lucide-react';
+import { Download, Filter, X, MessageSquare, ArrowDownAZ, ArrowUpAZ, Calendar } from 'lucide-react';
 
 interface WordbookManagerProps {
   onPracticeWord?: (word: WordDefinition) => void;
@@ -10,6 +10,7 @@ interface WordbookManagerProps {
 export function WordbookManager({ onPracticeWord }: WordbookManagerProps) {
   const { state, removeWord, setFilter, clearFilter } = useWordbook();
   const [showFilters, setShowFilters] = useState(false);
+  const [sortType, setSortType] = useState<'date_desc' | 'date_asc' | 'az' | 'za'>('date_desc');
 
   const filteredWords = state.words.filter(word => {
     if (state.filter.searchTerm) {
@@ -36,6 +37,19 @@ export function WordbookManager({ onPracticeWord }: WordbookManagerProps) {
     }
 
     return true;
+  }).sort((a, b) => {
+    switch (sortType) {
+      case 'date_desc':
+        return new Date(b.dateAdded || 0).getTime() - new Date(a.dateAdded || 0).getTime();
+      case 'date_asc':
+        return new Date(a.dateAdded || 0).getTime() - new Date(b.dateAdded || 0).getTime();
+      case 'az':
+        return a.word.localeCompare(b.word);
+      case 'za':
+        return b.word.localeCompare(a.word);
+      default:
+        return 0;
+    }
   });
 
   const exportToCSV = () => {
@@ -95,6 +109,36 @@ export function WordbookManager({ onPracticeWord }: WordbookManagerProps) {
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-bold text-gray-800">我的单词本</h2>
           <div className="flex items-center gap-2">
+            <div className="flex items-center bg-gray-100 rounded-lg p-1 mr-2">
+              <button
+                onClick={() => setSortType('date_desc')}
+                className={`p-1.5 rounded-md transition-colors ${sortType === 'date_desc' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                title="按时间倒序"
+              >
+                <Calendar className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setSortType('date_asc')}
+                className={`p-1.5 rounded-md transition-colors ${sortType === 'date_asc' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                title="按时间正序"
+              >
+                <Calendar className="w-4 h-4 rotate-180" />
+              </button>
+              <button
+                onClick={() => setSortType('az')}
+                className={`p-1.5 rounded-md transition-colors ${sortType === 'az' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                title="按字母 A-Z"
+              >
+                <ArrowDownAZ className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setSortType('za')}
+                className={`p-1.5 rounded-md transition-colors ${sortType === 'za' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                title="按字母 Z-A"
+              >
+                <ArrowUpAZ className="w-4 h-4" />
+              </button>
+            </div>
             <button
               onClick={() => setShowFilters(!showFilters)}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${

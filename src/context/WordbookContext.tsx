@@ -22,7 +22,7 @@ function wordbookReducer(state: WordbookState, action: WordbookAction): Wordbook
     case 'ADD_WORD':
       return {
         ...state,
-        words: [...state.words, { ...action.payload, dateAdded: new Date().toISOString() }],
+        words: [{ ...action.payload, dateAdded: new Date().toISOString() }, ...state.words],
       };
     case 'REMOVE_WORD':
       return {

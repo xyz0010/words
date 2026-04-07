@@ -23,12 +23,10 @@ export async function translateToChinese(text: string): Promise<string> {
   if (cache[key]) return cache[key];
 
   try {
-    const devKey = typeof window !== 'undefined' ? (localStorage.getItem('YOUDAO_DEV_KEY') || '') : '';
-    const devSecret = typeof window !== 'undefined' ? (localStorage.getItem('YOUDAO_DEV_SECRET') || '') : '';
     const res = await fetch('/api/youdao/translate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ q: text, from: 'en', to: 'zh-CHS', devKey, devSecret }),
+      body: JSON.stringify({ q: text, from: 'en', to: 'zh-CHS' }),
     });
     if (!res.ok) throw new Error('translate failed');
     const data = await res.json();
