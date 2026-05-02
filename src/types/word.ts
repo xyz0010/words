@@ -36,9 +36,12 @@ export interface WordbookState {
 
 export interface WordbookContextType {
   state: WordbookState;
-  addWord: (word: WordDefinition) => void;
-  removeWord: (word: string) => void;
+  isSyncing: boolean;
+  syncError: string;
+  addWord: (word: WordDefinition) => Promise<void>;
+  removeWord: (word: string) => Promise<void>;
   isInWordbook: (word: string) => boolean;
   setFilter: (filter: Partial<WordbookState['filter']>) => void;
   clearFilter: () => void;
+  refreshWordbook: () => Promise<void>;
 }

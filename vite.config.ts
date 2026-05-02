@@ -3,6 +3,59 @@ import react from '@vitejs/plugin-react'
 import tsconfigPaths from "vite-tsconfig-paths";
 import type { Plugin } from 'vite';
 import crypto from 'node:crypto';
+import { deleteWord, getWordbook, importWords, resolveUserId, upsertWord } from './server/wordbookStore.js';
+
+function extractDictTranslation(data: any): string {
+  let translation = '';
+  try {
+    const trs = data.ec?.word?.[0]?.trs?.[0]?.tr?.[0]?.l?.i?.[0];
+    if (trs) translation = trs;
+  } catch {}
+
+  if (!translation && data.web_trans?.['web-translation']?.[0]?.trans?.[0]?.value) {
+    translation = data.web_trans['web-translation'][0].trans[0].value;
+  }
+
+  if (!translation && data.fanyi?.tran) {
+    translation = data.fanyi.tran;
+  }
+
+  return translation;
+}
+
+function truncate(text: string): string {
+  if (text.length <= 20) return text;
+  return `${text.slice(0, 10)}${text.length}${text.slice(-10)}`;
+}
+
+async function fetchSentenceTranslation(q: string): Promise<string> {
+  const body = new URLSearchParams({
+    i: q,
+    from: 'en',
+    to: 'zh-CHS',
+    smartresult: 'dict',
+    client: 'fanyideskweb',
+    doctype: 'json',
+    version: '2.1',
+    keyfrom: 'fanyi.web',
+    action: 'FY_BY_REALTIME',
+  });
+
+  const resp = await fetch('https://fanyi.youdao.com/translate_o?smartresult=dict&smartresult=rule', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      'User-Agent': 'Mozilla/5.0',
+      Referer: 'https://fanyi.youdao.com/',
+      Origin: 'https://fanyi.youdao.com',
+    },
+    body: body.toString(),
+  });
+
+  const data = await resp.json();
+  const lines = Array.isArray(data?.translateResult) ? data.translateResult : [];
+  return lines.flat().map((item: any) => item?.tgt || '').join('').trim();
+}
 
 function cozeExamplesPlugin(env: Record<string, string>): Plugin {
   const COZE_TOKEN = (env.COZE_TOKEN || '').trim();
@@ -154,7 +207,7 @@ JSON 结构如下：
                       return { sentence: String(it.sentence || ''), translation: typeof it.translation === 'string' ? it.translation : '' };
                     }
                     return { sentence: '' };
-                  }).filter(s => s.sentence);
+                  }).filter((s: { sentence: string }) => s.sentence);
                 } else if (Array.isArray(inner.sentences)) {
                   const arr = inner.sentences;
                   sentences = arr.slice(0, count).map((it: any) => {
@@ -166,7 +219,7 @@ JSON 结构如下：
                       return { sentence: String(it.sentence || ''), translation: typeof it.translation === 'string' ? it.translation : '' };
                     }
                     return { sentence: '' };
-                  }).filter(s => s.sentence);
+                  }).filter((s: { sentence: string }) => s.sentence);
                 } else if (inner && typeof inner === 'object' && Array.isArray(inner.data)) {
                   const arr = inner.data;
                   sentences = arr.slice(0, count).map((it: any) => {
@@ -177,7 +230,7 @@ JSON 结构如下：
                       return { sentence: eng, translation: typeof zh === 'string' ? zh : '' };
                     }
                     return { sentence: '' };
-                  }).filter(s => s.sentence);
+                  }).filter((s: { sentence: string }) => s.sentence);
                 } else if (inner && typeof inner === 'object' && Array.isArray(inner.example_sentences)) {
                   const arr = inner.example_sentences;
                   sentences = arr.slice(0, count).map((it: any) => {
@@ -188,7 +241,7 @@ JSON 结构如下：
                       return { sentence: eng, translation: typeof zh === 'string' ? zh : '' };
                     }
                     return { sentence: '' };
-                  }).filter(s => s.sentence);
+                  }).filter((s: { sentence: string }) => s.sentence);
                 } else if (inner && typeof inner === 'object' && (inner.english || inner.chinese)) {
                   const item = { sentence: String(inner.english || ''), translation: typeof inner.chinese === 'string' ? inner.chinese : '' };
                   sentences = item.sentence ? [item] : [];
@@ -225,6 +278,8 @@ JSON 结构如下：
 }
 
 function youdaoTranslatePlugin(env: Record<string, string>): Plugin {
+  const YOUDAO_APP_KEY = (env.YOUDAO_APP_KEY || '').trim();
+  const YOUDAO_APP_SECRET = (env.YOUDAO_APP_SECRET || '').trim();
   return {
     name: 'youdao-translate-proxy',
     configureServer(server) {
@@ -236,10 +291,53 @@ function youdaoTranslatePlugin(env: Record<string, string>): Plugin {
           try {
             const payload = JSON.parse(body || '{}');
             const q = String(payload.q || '').trim();
+            const mode = String(payload.mode || 'translate').trim();
             if (!q) {
               res.statusCode = 400;
               res.setHeader('Content-Type', 'application/json');
               return res.end(JSON.stringify({ error: 'q_required' }));
+            }
+
+            if (mode !== 'dict' && (!YOUDAO_APP_KEY || !YOUDAO_APP_SECRET)) {
+              res.statusCode = 200;
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(JSON.stringify({ translation: '', source: 'env_missing' }));
+            }
+
+            if (mode !== 'dict') {
+              const salt = `${Date.now()}`;
+              const curtime = `${Math.floor(Date.now() / 1000)}`;
+              const sign = crypto
+                .createHash('sha256')
+                .update(`${YOUDAO_APP_KEY}${truncate(q)}${salt}${curtime}${YOUDAO_APP_SECRET}`)
+                .digest('hex');
+
+              const officialResp = await fetch('https://openapi.youdao.com/api', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: new URLSearchParams({
+                  q,
+                  from: 'en',
+                  to: 'zh-CHS',
+                  appKey: YOUDAO_APP_KEY,
+                  salt,
+                  sign,
+                  signType: 'v3',
+                  curtime,
+                }).toString(),
+              });
+              const officialData = await officialResp.json();
+              const officialTranslation = Array.isArray(officialData?.translation)
+                ? officialData.translation.join(' ').trim()
+                : '';
+
+              if (officialTranslation) {
+                res.statusCode = 200;
+                res.setHeader('Content-Type', 'application/json');
+                return res.end(JSON.stringify({ translation: officialTranslation, raw: officialData, source: 'youdao_official' }));
+              }
             }
             
             // Switch to Youdao Web API for better dictionary data
@@ -255,31 +353,21 @@ function youdaoTranslatePlugin(env: Record<string, string>): Plugin {
             console.log('Youdao Web API Response for:', q);
             // console.log(JSON.stringify(data, null, 2));
 
-            let translation = '';
-            // Try to extract basic translation from 'ec' (English-Chinese)
-            try {
-                const trs = data.ec?.word?.[0]?.trs?.[0]?.tr?.[0]?.l?.i?.[0];
-                if (trs) translation = trs;
-            } catch {}
+            let translation = extractDictTranslation(data);
+            let source = 'youdao_web';
 
-            // Fallback to 'simple'
-            if (!translation && data.simple?.word?.[0]?.return_phrase) {
-               // translation = data.simple.word[0].return_phrase; 
-            }
-
-            // Fallback to 'web_trans'
-            if (!translation && data.web_trans?.['web-translation']?.[0]?.trans?.[0]?.value) {
-                translation = data.web_trans['web-translation'][0].trans[0].value;
-            }
-            
-            // Fallback to 'fanyi' translation if available
-            if (!translation && data.fanyi?.tran) {
-                translation = data.fanyi.tran;
+            if (!translation) {
+              try {
+                translation = await fetchSentenceTranslation(q);
+                if (translation) source = 'youdao_sentence';
+              } catch (fallbackError) {
+                console.error('Youdao sentence fallback error:', fallbackError);
+              }
             }
 
             res.statusCode = 200;
             res.setHeader('Content-Type', 'application/json');
-            return res.end(JSON.stringify({ translation, raw: data, source: 'youdao_web' }));
+            return res.end(JSON.stringify({ translation, raw: data, source }));
           } catch (e) {
             console.error('Proxy Error:', e);
             res.statusCode = 200;
@@ -287,6 +375,97 @@ function youdaoTranslatePlugin(env: Record<string, string>): Plugin {
             return res.end(JSON.stringify({ translation: '', source: 'internal_error' }));
           }
         });
+      });
+    },
+  };
+}
+
+function wordbookApiPlugin(): Plugin {
+  return {
+    name: 'wordbook-api-proxy',
+    configureServer(server) {
+      server.middlewares.use('/api/health', async (req, res, next) => {
+        if (req.method !== 'GET') return next();
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        return res.end(JSON.stringify({ ok: true, service: 'words-api-dev' }));
+      });
+
+      server.middlewares.use('/api/wordbook/import', async (req, res, next) => {
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (chunk) => (body += chunk));
+        req.on('end', async () => {
+          try {
+            const payload = JSON.parse(body || '{}');
+            const userId = resolveUserId(payload.userId);
+            const result = await importWords(userId, payload.words);
+            res.statusCode = 201;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify(result));
+          } catch (error) {
+            console.error('Wordbook import error:', error);
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ error: 'wordbook_import_failed' }));
+          }
+        });
+      });
+
+      server.middlewares.use('/api/wordbook', async (req, res, next) => {
+        if (req.method !== 'GET' && req.method !== 'POST') return next();
+
+        if (req.method === 'GET') {
+          try {
+            const url = new URL(req.url || '', 'http://local');
+            const userId = resolveUserId(url.searchParams.get('userId'));
+            const result = await getWordbook(userId);
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify(result));
+          } catch (error) {
+            console.error('Wordbook get error:', error);
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ error: 'wordbook_load_failed' }));
+          }
+        }
+
+        let body = '';
+        req.on('data', (chunk) => (body += chunk));
+        req.on('end', async () => {
+          try {
+            const payload = JSON.parse(body || '{}');
+            const userId = resolveUserId(payload.userId);
+            const word = await upsertWord(userId, payload.word);
+            res.statusCode = 201;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ userId, word }));
+          } catch (error) {
+            console.error('Wordbook save error:', error);
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ error: 'wordbook_save_failed' }));
+          }
+        });
+      });
+
+      server.middlewares.use(async (req: any, res: any, next: any) => {
+        if (req.method !== 'DELETE' || !req.url?.startsWith('/api/wordbook/')) return next();
+        try {
+          const url = new URL(req.url || '', 'http://local');
+          const word = decodeURIComponent(url.pathname.replace(/^\/api\/wordbook\//, ''));
+          const userId = resolveUserId(url.searchParams.get('userId'));
+          const result = await deleteWord(userId, word);
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          return res.end(JSON.stringify(result));
+        } catch (error) {
+          console.error('Wordbook delete error:', error);
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json');
+          return res.end(JSON.stringify({ error: 'wordbook_delete_failed' }));
+        }
       });
     },
   };
@@ -307,6 +486,7 @@ export default defineConfig(({ mode }) => {
         ],
       },
     }), 
+    wordbookApiPlugin(),
     youdaoTranslatePlugin(env),
     cozeExamplesPlugin(env),
     tsconfigPaths()

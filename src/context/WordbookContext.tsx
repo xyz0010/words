@@ -1,5 +1,12 @@
-import { createContext, useContext, useReducer, useEffect } from 'react';
+import { createContext, useContext, useReducer, useEffect, useRef, useState } from 'react';
 import { WordbookState, WordDefinition, WordbookContextType } from '../types/word';
+import {
+  fetchWordbookWords,
+  importLegacyWordbook,
+  LEGACY_WORD_STORAGE_KEY,
+  removeWordFromWordbook,
+  saveWordToWordbook,
+} from '../services/wordbook';
 
 interface WordbookAction {
   type: string;
@@ -12,7 +19,6 @@ const initialState: WordbookState = {
   filter: {},
 };
 
-const WORD_STORAGE_KEY = 'wordbook_words';
 const HISTORY_STORAGE_KEY = 'wordbook_history';
 
 // 取消默认示例词，避免覆盖用户本地收藏
@@ -43,7 +49,7 @@ function wordbookReducer(state: WordbookState, action: WordbookAction): Wordbook
       return {
         ...state,
         words: action.payload.words || [],
-        searchHistory: action.payload.searchHistory || [],
+        searchHistory: action.payload.searchHistory || state.searchHistory,
       };
     default:
       return state;
@@ -53,15 +59,15 @@ function wordbookReducer(state: WordbookState, action: WordbookAction): Wordbook
 const WordbookContext = createContext<WordbookContextType | undefined>(undefined);
 
 export function WordbookProvider({ children }: { children: React.ReactNode }) {
+  const hasLoadedRef = useRef(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState('');
   const [state, dispatch] = useReducer(wordbookReducer, initialState, (init) => {
     try {
-      const wordsRaw = localStorage.getItem(WORD_STORAGE_KEY);
       const historyRaw = localStorage.getItem(HISTORY_STORAGE_KEY);
-      const words = wordsRaw ? JSON.parse(wordsRaw) : [];
       const searchHistory = historyRaw ? JSON.parse(historyRaw) : [];
       return {
         ...init,
-        words: Array.isArray(words) ? words : [],
         searchHistory: Array.isArray(searchHistory) ? searchHistory : [],
       };
     } catch {
@@ -71,30 +77,82 @@ export function WordbookProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     try {
-      localStorage.setItem(WORD_STORAGE_KEY, JSON.stringify(state.words));
-    } catch (error) {
-      console.error('Failed to save words to localStorage:', error);
-    }
-  }, [state.words]);
-
-  
-
-  useEffect(() => {
-    try {
       localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(state.searchHistory));
     } catch (error) {
       console.error('Failed to save search history to localStorage:', error);
     }
   }, [state.searchHistory]);
 
-  const addWord = (word: WordDefinition) => {
-    if (!state.words.some(w => w.word.toLowerCase() === word.word.toLowerCase())) {
-      dispatch({ type: 'ADD_WORD', payload: word });
+  const refreshWordbook = async () => {
+    setIsSyncing(true);
+    setSyncError('');
+
+    try {
+      const remoteWords = await fetchWordbookWords();
+      if (remoteWords.length > 0) {
+        dispatch({ type: 'LOAD_DATA', payload: { words: remoteWords } });
+        localStorage.removeItem(LEGACY_WORD_STORAGE_KEY);
+        return;
+      }
+
+      const wordsRaw = localStorage.getItem(LEGACY_WORD_STORAGE_KEY);
+      const legacyWords = wordsRaw ? JSON.parse(wordsRaw) : [];
+      if (Array.isArray(legacyWords) && legacyWords.length > 0) {
+        const importedWords = await importLegacyWordbook(legacyWords);
+        dispatch({ type: 'LOAD_DATA', payload: { words: importedWords } });
+        localStorage.removeItem(LEGACY_WORD_STORAGE_KEY);
+        return;
+      }
+
+      dispatch({ type: 'LOAD_DATA', payload: { words: [] } });
+    } catch (error) {
+      console.error('Failed to sync wordbook from server:', error);
+      try {
+        const wordsRaw = localStorage.getItem(LEGACY_WORD_STORAGE_KEY);
+        const legacyWords = wordsRaw ? JSON.parse(wordsRaw) : [];
+        dispatch({ type: 'LOAD_DATA', payload: { words: Array.isArray(legacyWords) ? legacyWords : [] } });
+      } catch {
+        dispatch({ type: 'LOAD_DATA', payload: { words: [] } });
+      }
+      setSyncError('单词本服务暂时不可用，当前显示的是本地数据。');
+    } finally {
+      setIsSyncing(false);
     }
   };
 
-  const removeWord = (word: string) => {
-    dispatch({ type: 'REMOVE_WORD', payload: word });
+  useEffect(() => {
+    if (hasLoadedRef.current) return;
+    hasLoadedRef.current = true;
+    void refreshWordbook();
+  }, []);
+
+  const addWord = async (word: WordDefinition) => {
+    if (state.words.some(w => w.word.toLowerCase() === word.word.toLowerCase())) return;
+    setIsSyncing(true);
+    setSyncError('');
+    try {
+      const savedWord = await saveWordToWordbook(word);
+      dispatch({ type: 'ADD_WORD', payload: savedWord });
+    } catch (error) {
+      console.error('Failed to add word to server wordbook:', error);
+      setSyncError('添加单词失败，请稍后重试。');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const removeWord = async (word: string) => {
+    setIsSyncing(true);
+    setSyncError('');
+    try {
+      await removeWordFromWordbook(word);
+      dispatch({ type: 'REMOVE_WORD', payload: word });
+    } catch (error) {
+      console.error('Failed to remove word from server wordbook:', error);
+      setSyncError('移除单词失败，请稍后重试。');
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   const isInWordbook = (word: string): boolean => {
@@ -111,11 +169,14 @@ export function WordbookProvider({ children }: { children: React.ReactNode }) {
 
   const value: WordbookContextType = {
     state,
+    isSyncing,
+    syncError,
     addWord,
     removeWord,
     isInWordbook,
     setFilter,
     clearFilter,
+    refreshWordbook,
   };
 
   return <WordbookContext.Provider value={value}>{children}</WordbookContext.Provider>;

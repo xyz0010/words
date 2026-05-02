@@ -8,7 +8,7 @@ export async function searchWord(word: string): Promise<WordDefinition> {
     const res = await fetch('/api/youdao/translate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ q: word, from, to }),
+      body: JSON.stringify({ q: word, from, to, mode: 'dict' }),
     });
     if (!res.ok) throw new Error('API error');
     const data = await res.json();

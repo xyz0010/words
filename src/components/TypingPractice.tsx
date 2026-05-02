@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useWordbook } from '../context/WordbookContext';
+import { loadCustomPassages, saveCustomPassages } from '../lib/passages';
 import { translateToChinese } from '../services/translate';
-import { Volume2, X, SkipForward, Lightbulb, Loader2 } from 'lucide-react';
+import { Volume2, X, SkipForward, Lightbulb, Loader2, RotateCcw, ListChecks, ArrowLeft } from 'lucide-react';
 import { fetchAiExamples, AiSentenceItem } from '../services/aiExamples';
 import { WordDefinition } from '../types/word';
+import { Passage } from '../types/practice';
 import { WordDetailModal } from './WordDetailModal';
 import confetti from 'canvas-confetti';
 
@@ -11,24 +14,213 @@ function normalizeApostrophes(s: string) {
   return s.replace(/[’‘ʼ`＇]/g, "'");
 }
 
+function normalizeSpacing(text: string) {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+function countWords(text: string) {
+  return (normalizeApostrophes(text).match(/[A-Za-z]+(?:'[A-Za-z]+)?/g) || []).length;
+}
+
+function splitAtWordIndex(text: string, wordIndex: number) {
+  const words = text.trim().split(/\s+/);
+  if (wordIndex <= 0 || wordIndex >= words.length) return [text.trim()];
+  return [
+    words.slice(0, wordIndex).join(' ').trim(),
+    words.slice(wordIndex).join(' ').trim(),
+  ].filter(Boolean);
+}
+
+function splitAtCharacterIndex(text: string, charIndex: number) {
+  const normalized = text.trim();
+  if (charIndex <= 0 || charIndex >= normalized.length) return [normalized];
+  return [
+    normalized.slice(0, charIndex).trim(),
+    normalized.slice(charIndex).trim(),
+  ].filter(Boolean);
+}
+
+function splitLongSentenceForPractice(sentence: string) {
+  const normalized = normalizeSpacing(sentence);
+  const maxWordsBeforeSplit = 14;
+  const minSegmentWords = 4;
+  const targetSegmentWords = 9;
+
+  if (countWords(normalized) <= maxWordsBeforeSplit) {
+    return [normalized];
+  }
+
+  const splitAtBestConjunction = (text: string): string[] => {
+    const words = text.trim().split(/\s+/);
+    if (words.length <= maxWordsBeforeSplit) return [text.trim()];
+
+    const conjunctionPattern = /^(and|but|or|so|because|when|while|if|that|which|who|where|although|though)$/i;
+    const middle = Math.floor(words.length / 2);
+    let bestIndex = -1;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    for (let i = minSegmentWords; i <= words.length - minSegmentWords; i += 1) {
+      if (!conjunctionPattern.test(words[i])) continue;
+      const distance = Math.abs(i - middle);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = i;
+      }
+    }
+
+    if (bestIndex !== -1) {
+      return splitAtWordIndex(text, bestIndex);
+    }
+
+    return splitAtWordIndex(text, middle);
+  };
+
+  const punctuationParts = normalized
+    .split(/(?<=[,;:])\s+/)
+    .map(part => part.trim())
+    .filter(Boolean);
+
+  if (punctuationParts.length >= 2) {
+    let bestSplitIndex = 1;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    for (let i = 1; i < punctuationParts.length; i += 1) {
+      const left = punctuationParts.slice(0, i).join(' ').trim();
+      const right = punctuationParts.slice(i).join(' ').trim();
+      const leftWords = countWords(left);
+      const rightWords = countWords(right);
+      if (leftWords < minSegmentWords || rightWords < minSegmentWords) continue;
+
+      const distance = Math.abs(leftWords - rightWords);
+      if (distance < bestDistance && leftWords <= maxWordsBeforeSplit + 3 && rightWords <= maxWordsBeforeSplit + 3) {
+        bestDistance = distance;
+        bestSplitIndex = i;
+      }
+    }
+
+    const left = punctuationParts.slice(0, bestSplitIndex).join(' ').trim();
+    const right = punctuationParts.slice(bestSplitIndex).join(' ').trim();
+    if (countWords(left) >= minSegmentWords && countWords(right) >= minSegmentWords) {
+      return [left, right];
+    }
+  }
+
+  const fallbackSegments = splitAtBestConjunction(normalized);
+  if (fallbackSegments.length === 2) {
+    return fallbackSegments;
+  }
+
+  const words = normalized.split(/\s+/);
+  const splitIndex = Math.min(
+    Math.max(minSegmentWords, targetSegmentWords),
+    Math.max(minSegmentWords, words.length - minSegmentWords)
+  );
+  return splitAtWordIndex(normalized, splitIndex);
+}
+
+function splitTranslationForPractice(translation: string | undefined, segmentCount: number) {
+  const normalized = translation?.trim() || '';
+  if (!normalized || segmentCount <= 1) {
+    return Array.from({ length: segmentCount }, () => normalized);
+  }
+
+  const punctuationParts = normalized
+    .split(/(?<=[，；：])/)
+    .map(part => part.trim())
+    .filter(Boolean);
+
+  if (punctuationParts.length >= segmentCount) {
+    if (segmentCount === 2) {
+      let bestSplitIndex = 1;
+      let bestDistance = Number.POSITIVE_INFINITY;
+
+      for (let i = 1; i < punctuationParts.length; i += 1) {
+        const left = punctuationParts.slice(0, i).join('').trim();
+        const right = punctuationParts.slice(i).join('').trim();
+        if (!left || !right) continue;
+        const distance = Math.abs(left.length - right.length);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestSplitIndex = i;
+        }
+      }
+
+      return [
+        punctuationParts.slice(0, bestSplitIndex).join('').trim(),
+        punctuationParts.slice(bestSplitIndex).join('').trim(),
+      ].filter(Boolean);
+    }
+
+    return punctuationParts.slice(0, segmentCount);
+  }
+
+  const midpoint = Math.floor(normalized.length / 2);
+  let splitIndex = midpoint;
+  const preferredChars = ['，', '；', '：', '。'];
+
+  for (let offset = 0; offset < normalized.length; offset += 1) {
+    const rightIndex = midpoint + offset;
+    const leftIndex = midpoint - offset;
+    if (rightIndex < normalized.length && preferredChars.includes(normalized[rightIndex])) {
+      splitIndex = rightIndex + 1;
+      break;
+    }
+    if (leftIndex > 0 && preferredChars.includes(normalized[leftIndex])) {
+      splitIndex = leftIndex + 1;
+      break;
+    }
+  }
+
+  const fallbackSegments = splitAtCharacterIndex(normalized, splitIndex);
+  if (fallbackSegments.length === 2) {
+    return fallbackSegments;
+  }
+
+  return [normalized];
+}
+
+interface PassagePracticeItem extends AiSentenceItem {
+  sourceSentence: string;
+  sourceSentenceIndex: number;
+}
+
+function buildPassagePracticeItems(sentences: AiSentenceItem[]): PassagePracticeItem[] {
+  return sentences.flatMap((item, sourceSentenceIndex) => {
+    const segments = splitLongSentenceForPractice(item.sentence);
+    const translationSegments = splitTranslationForPractice(item.translation, segments.length);
+    return segments.map((segment, segmentIndex) => ({
+      sentence: segment,
+      translation: translationSegments[segmentIndex] || item.translation,
+      sourceSentence: item.sentence,
+      sourceSentenceIndex,
+    }));
+  });
+}
+
 interface TypingPracticeProps {
   startWord?: string;
   initialWordData?: WordDefinition;
+  practiceMode?: 'word' | 'passage';
+  passage?: Passage;
 }
 
-export function TypingPractice({ startWord, initialWordData }: TypingPracticeProps) {
+export function TypingPractice({ startWord, initialWordData, practiceMode, passage }: TypingPracticeProps) {
+  const navigate = useNavigate();
   const { state } = useWordbook();
   const [index, setIndex] = useState(0);
+  const isPassageMode = practiceMode === 'passage' && !!passage?.sentences?.length;
   
   // 统一计算练习单词列表：如果有 initialWordData 则只练这一个，否则练习单词本所有单词
   const practiceWords = useMemo(() => {
+    if (isPassageMode) return [];
     if (initialWordData) return [initialWordData];
     return state.words;
-  }, [initialWordData, state.words]);
+  }, [initialWordData, isPassageMode, state.words]);
 
   const [question, setQuestion] = useState('');
   const [checking, setChecking] = useState(false);
   const [showAnswer, setShowAnswer] = useState(false);
+  const [showPassageReview, setShowPassageReview] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const [wasWrong, setWasWrong] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(0);
@@ -39,10 +231,12 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
   const [aiError, setAiError] = useState('');
   const [aiSentence, setAiSentence] = useState('');
   const [aiPack, setAiPack] = useState<AiSentenceItem[]>([]);
+  const [passageReviewItems, setPassageReviewItems] = useState<AiSentenceItem[]>([]);
+  const [passagePracticeItems, setPassagePracticeItems] = useState<PassagePracticeItem[]>([]);
   const [aiIndex, setAiIndex] = useState(0);
   const [attemptCounts, setAttemptCounts] = useState<number[]>([]);
   const [revealHints, setRevealHints] = useState<boolean[]>([]);
-  const [hintCount, setHintCount] = useState<number>(1);
+  const hintCount = 1;
   const loadAiSentencesRef = useRef(loadAiSentences);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const practiceRootRef = useRef<HTMLDivElement>(null);
@@ -64,14 +258,6 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
     { id: 'mute', label: '静音' },
   ] as const;
 
-  const handlePrev = () => {
-    setIndex((prev) => Math.max(0, prev - 1));
-  };
-
-  const handleNext = () => {
-    setIndex((prev) => Math.min(practiceWords.length - 1, prev + 1));
-  };
-
   const current = practiceWords[index];
 
   const scrollFocusedContentIntoView = (behavior: ScrollBehavior = 'smooth') => {
@@ -90,6 +276,7 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
   };
   
   const example = useMemo(() => {
+    if (isPassageMode) return '';
     if (!current) return '';
     for (const m of current.meanings) {
       for (const d of m.definitions) {
@@ -97,7 +284,7 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
       }
     }
     return '';
-  }, [current]);
+  }, [current, isPassageMode]);
   const expectedWords = useMemo(() => {
     const src = aiSentence || example || '';
     const cleaned = normalizeApostrophes(src);
@@ -105,7 +292,65 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
     return words;
   }, [example, aiSentence]);
 
+  const persistPassageTranslation = (sourceSentenceIndex: number, translation: string) => {
+    if (!translation.trim()) return;
+
+    setPassageReviewItems((prev) =>
+      prev.map((item, idx) =>
+        idx === sourceSentenceIndex ? { ...item, translation } : item
+      )
+    );
+
+    setPassagePracticeItems((prev) =>
+      prev.map((item) =>
+        item.sourceSentenceIndex === sourceSentenceIndex ? { ...item, translation } : item
+      )
+    );
+
+    if (!isPassageMode || !passage || passage.source !== 'custom') return;
+
+    const storedPassages = loadCustomPassages();
+    const nextPassages = storedPassages.map((storedPassage) => {
+      if (storedPassage.id !== passage.id) return storedPassage;
+
+      return {
+        ...storedPassage,
+        sentences: storedPassage.sentences.map((sentence, idx) =>
+          idx === sourceSentenceIndex ? { ...sentence, translation } : sentence
+        ),
+      };
+    });
+
+    saveCustomPassages(nextPassages);
+  };
+
+  const loadSentence = async (item: AiSentenceItem | PassagePracticeItem, nextIndex: number) => {
+    setAiIndex(nextIndex);
+    setAiSentence(item.sentence);
+    const words = item.sentence.match(/[A-Za-z]+(?:'[A-Za-z]+)?/g) || [];
+    setSentenceInputs(words.map(() => ''));
+    setLockedWords(words.map(() => false));
+    setShakeWords(words.map(() => false));
+    setAttemptCounts(words.map(() => 0));
+    setRevealHints(words.map(() => false));
+    setFocusedIndex(0);
+    setShowAnswer(false);
+    setShowPassageReview(false);
+
+    if (item.translation) {
+      setQuestion(item.translation);
+    } else {
+      const sourceText = 'sourceSentence' in item ? item.sourceSentence : item.sentence;
+      const zh = await translateToChinese(sourceText);
+      setQuestion(zh);
+      if ('sourceSentenceIndex' in item) {
+        persistPassageTranslation(item.sourceSentenceIndex, zh);
+      }
+    }
+  };
+
   async function loadAiSentences(stage?: number) {
+    if (isPassageMode) return;
     if (!current) return;
     setAiLoading(true);
     setAiError('');
@@ -118,22 +363,7 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
       if (sents[0]) console.log('Chosen item:', sents[0]);
       if (first) {
         setAiPack(sents);
-        setAiIndex(0);
-        setAiSentence(first);
-        const words = first.match(/[A-Za-z]+(?:'[A-Za-z]+)?/g) || [];
-        setSentenceInputs(words.map(() => ''));
-        setLockedWords(words.map(() => false));
-        setShakeWords(words.map(() => false));
-        setAttemptCounts(words.map(() => 0));
-        setRevealHints(words.map(() => false));
-        setFocusedIndex(0);
-        setShowAnswer(false);
-        if (firstZh) {
-          setQuestion(firstZh);
-        } else {
-          const zh = await translateToChinese(first);
-          setQuestion(zh);
-        }
+        await loadSentence({ sentence: first, translation: firstZh }, 0);
       } else {
         setAiError('未获取到AI例句');
       }
@@ -147,6 +377,7 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
   
 
   useEffect(() => {
+    if (isPassageMode) return;
     setChecking(false);
     setShowAnswer(false);
     setScenarioStage(0);
@@ -157,7 +388,29 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
       setQuestion(zh);
     };
     if (current) load();
-  }, [current, example]);
+  }, [current, example, isPassageMode]);
+
+  useEffect(() => {
+    if (!isPassageMode || !passage?.sentences.length) return;
+
+    const loadPassage = async () => {
+      const reviewItems = passage.sentences.map((item) => ({ ...item }));
+      const practiceItems = buildPassagePracticeItems(reviewItems);
+      const first = practiceItems[0];
+      setChecking(false);
+      setShowAnswer(false);
+      setShowPassageReview(false);
+      setAiLoading(false);
+      setAiError('');
+      setScenarioStage(0);
+      setPassageReviewItems(reviewItems);
+      setPassagePracticeItems(practiceItems);
+      if (!first) return;
+      await loadSentence(first, 0);
+    };
+
+    void loadPassage();
+  }, [isPassageMode, passage]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -205,14 +458,16 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
 
   useEffect(() => {
     if (!startWord) return;
+    if (isPassageMode) return;
     const idx = practiceWords.findIndex(w => w.word.toLowerCase() === startWord.toLowerCase());
     if (idx >= 0) {
       setIndex(idx);
     }
-  }, [startWord, practiceWords]);
+  }, [startWord, practiceWords, isPassageMode]);
 
   useEffect(() => {
     // 无论是单个单词模式还是单词本模式，都使用统一的加载逻辑
+    if (isPassageMode) return;
     if (!current) return;
     if (aiLoading) return;
     
@@ -227,36 +482,32 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
         lastLoadedKeyRef.current = key;
         loadAiSentencesRef.current(scenarioStage);
     }
-  }, [startWord, current, aiPack.length, aiLoading, scenarioStage]);
+  }, [startWord, current, aiPack.length, aiLoading, scenarioStage, isPassageMode]);
 
   // const onSubmit = async () => { ... } // Removed
 
   const proceedToNextSentence = async () => {
     if (aiLoading) return;
     const nextIdx = aiIndex + 1;
-    if (nextIdx < aiPack.length) {
-      setAiIndex(nextIdx);
-      const next = aiPack[nextIdx];
-      setAiSentence(next.sentence);
-      const words = next.sentence.match(/[A-Za-z]+(?:'[A-Za-z]+)?/g) || [];
-      setSentenceInputs(words.map(() => ''));
-      setLockedWords(words.map(() => false));
-      setShakeWords(words.map(() => false));
-      setAttemptCounts(words.map(() => 0));
-      setRevealHints(words.map(() => false));
-      setFocusedIndex(0);
+    const activePack = isPassageMode ? passagePracticeItems : aiPack;
+    if (nextIdx < activePack.length) {
+      const next = activePack[nextIdx];
+      await loadSentence(next, nextIdx);
+    } else if (isPassageMode && activePack.length > 0) {
       setShowAnswer(false);
-      if (next.translation) {
-        setQuestion(next.translation);
-      } else {
-        const zh = await translateToChinese(next.sentence);
-        setQuestion(zh);
-      }
+      setShowPassageReview(true);
     } else {
       const nextStage = (scenarioStage + 1) % SCENARIOS.length;
       setScenarioStage(nextStage);
       await loadAiSentences(nextStage);
     }
+  };
+
+  const restartPassagePractice = async () => {
+    if (!isPassageMode || passagePracticeItems.length === 0) return;
+    setChecking(false);
+    setAiError('');
+    await loadSentence(passagePracticeItems[0], 0);
   };
 
   const applyRandomHints = (countOverride?: number) => {
@@ -274,9 +525,9 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
   };
 
   const speak = () => {
-    if (!current) return;
     try {
-      const expected = aiSentence || example || current.word;
+      const expected = aiSentence || example || current?.word || '';
+      if (!expected) return;
       const utter = new SpeechSynthesisUtterance(expected);
       utter.lang = 'en-US';
       speechSynthesis.cancel(); // Cancel previous
@@ -368,7 +619,7 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
     };
   }, [showAnswer, proceedToNextSentence]);
 
-  if (!current) {
+  if (!isPassageMode && !current) {
     return (
       <div className="text-center py-12 text-gray-500">
         暂无单词，请先添加到单词本
@@ -387,44 +638,42 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
       {/* Top Header Area */}
       <div className="mb-3 flex flex-col gap-2 sm:mb-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3 shrink-0">
-              {practiceWords.length > 1 && (
+              {!isPassageMode && practiceWords.length > 1 && (
                 <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-500 sm:text-sm">
                   单词进度：{index + 1} / {practiceWords.length}
                 </span>
               )}
+              {isPassageMode && passage && (
+                <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-500 sm:text-sm">
+                  短文：{passage.title}
+                </span>
+              )}
+              {showPassageReview && (
+                <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 sm:text-sm">
+                  已完成
+                </span>
+              )}
           </div>
 
-          {/* Progress Dots - Center (Sentence Progress) */}
-          <div className="flex min-w-0 flex-1 justify-start sm:mx-4 sm:max-w-md sm:justify-center">
-             {aiPack.length > 0 ? (
-               <div className="flex flex-wrap items-center gap-2">
-                 {aiPack.map((_, idx) => (
-                   <div
-                     key={idx}
-                     className={`
-                       w-2.5 h-2.5 rounded-full transition-all duration-300
-                       ${idx === aiIndex 
-                         ? 'bg-blue-600 scale-125 shadow-sm' 
-                         : idx < aiIndex 
-                           ? 'bg-blue-300' 
-                           : 'bg-gray-200'
-                       }
-                     `}
-                   />
-                 ))}
-               </div>
-             ) : (
-               <div className="flex items-center gap-2 animate-pulse">
-                 {[...Array(5)].map((_, i) => (
-                   <div key={i} className="w-2.5 h-2.5 rounded-full bg-gray-200" />
-                 ))}
-               </div>
-             )}
-          </div>
+          <div className="flex items-center justify-start gap-2 sm:justify-end">
+            {(isPassageMode ? passagePracticeItems : aiPack).length > 0 ? (
+              <div className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 sm:text-sm">
+                进度：{Math.min(aiIndex + 1, (isPassageMode ? passagePracticeItems : aiPack).length)} / {(isPassageMode ? passagePracticeItems : aiPack).length}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 animate-pulse">
+                {[...Array(5)].map((_, i) => (
+                  <div key={i} className="w-2.5 h-2.5 rounded-full bg-gray-200" />
+                ))}
+              </div>
+            )}
 
-          <div className="flex w-fit items-center gap-2 rounded-full bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 sm:text-sm">
-            <span>场景：</span>
-            <span>{SCENARIOS[scenarioStage]}</span>
+            {!isPassageMode && (
+              <div className="flex w-fit items-center gap-2 rounded-full bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 sm:text-sm">
+                <span>场景：</span>
+                <span>{SCENARIOS[scenarioStage]}</span>
+              </div>
+            )}
           </div>
       </div>
 
@@ -435,6 +684,29 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
             <Loader2 className="w-12 h-12 text-blue-500 animate-spin" />
             <div className="text-lg font-medium">AI 正在生成例句...</div>
             <div className="text-sm text-slate-400">这可能需要几秒钟</div>
+          </div>
+        ) : showPassageReview && isPassageMode && passage ? (
+          <div className="px-4 py-6 sm:px-6 sm:py-8">
+            <div className="rounded-2xl bg-gradient-to-r from-emerald-50 to-blue-50 px-5 py-6 text-center">
+              <div className="text-sm font-medium text-emerald-700">短文学习完成</div>
+              <h2 className="mt-2 text-2xl font-bold text-slate-800 sm:text-3xl">{passage.title}</h2>
+              <p className="mt-3 text-sm leading-6 text-slate-600 sm:text-base">{passage.description}</p>
+              <div className="mt-4 inline-flex rounded-full bg-white px-4 py-2 text-sm text-slate-600 shadow-sm">
+                共完成 {passagePracticeItems.length} 段练习，回顾 {passageReviewItems.length} 句原文
+              </div>
+            </div>
+
+            <div className="mt-6 space-y-3">
+              {passageReviewItems.map((item, idx) => (
+                <div key={`${item.sentence}-${idx}`} className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-blue-600">Sentence {idx + 1}</div>
+                  <div className="text-lg font-medium leading-7 text-slate-800">{item.sentence}</div>
+                  {item.translation && (
+                    <div className="mt-2 text-sm leading-6 text-slate-500">{item.translation}</div>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         ) : (
           <>
@@ -451,14 +723,14 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
                {showAnswer ? (
                   <div className="text-center animate-in fade-in zoom-in duration-300">
                     <div className="mb-4 break-words text-xl font-medium leading-relaxed text-blue-600 sm:text-2xl md:text-3xl">
-                      {expectedWords.join(' ') || current.word}
+                      {expectedWords.join(' ') || current?.word || ''}
                     </div>
                     <div className="text-sm text-gray-400 animate-in fade-in duration-1000 delay-1000 fill-mode-forwards opacity-0" style={{ animationDelay: '1.5s', animationFillMode: 'forwards' }}>
                       按 Enter 进入下一题
                     </div>
                   </div>
                ) : (
-                 <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-4 sm:gap-x-3 sm:gap-y-5">
+                 <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-4 sm:gap-x-5 sm:gap-y-5">
                   {expectedWords.map((w: string, i: number) => (
                     <div
                       key={i}
@@ -466,10 +738,10 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
                         wordRefs.current[i] = el;
                       }}
                       className={`
-                        group relative h-10 min-w-[2rem] transition-all duration-200 sm:h-12
+                        group relative h-10 min-w-[2rem] px-1 transition-all duration-200 sm:h-12 sm:px-1.5
                         ${focusedIndex === i ? 'scale-105' : 'opacity-90 hover:opacity-100'}
                       `}
-                      style={{ width: `${Math.max(2, w.length)}ch` }}
+                      style={{ width: `calc(${Math.max(2, w.length)}ch + 0.5rem)` }}
                       onClick={(e) => { e.stopPropagation(); setFocusedIndex(i); }}
                     >
                       <div 
@@ -621,9 +893,12 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
 
         {/* Center: Status Messages */}
         <div className="flex-1 text-center md:px-4">
-           {aiLoading && <span className="text-sm text-blue-600 animate-pulse">正在生成场景例句...</span>}
-           {aiError && <span className="text-sm text-red-500">{aiError}</span>}
-           {checking && wasWrong && !aiLoading && !aiError && (
+           {showPassageReview && isPassageMode && (
+             <span className="text-sm font-medium text-emerald-600">整篇回顾已生成，可以重新学习或返回短文列表</span>
+           )}
+           {aiLoading && !isPassageMode && <span className="text-sm text-blue-600 animate-pulse">正在生成场景例句...</span>}
+           {aiError && !showPassageReview && <span className="text-sm text-red-500">{aiError}</span>}
+           {checking && wasWrong && !aiLoading && !aiError && !showPassageReview && (
              <span className="text-sm text-red-500 font-medium flex items-center justify-center gap-1">
                <X className="w-4 h-4" /> 答案有误，请修正
              </span>
@@ -632,6 +907,25 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
 
         {/* Right: Action Buttons */}
         <div className="flex w-full flex-col gap-3 sm:flex-row md:w-auto">
+          {showPassageReview && isPassageMode ? (
+            <>
+              <button
+                onClick={() => void restartPassagePractice()}
+                className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+              >
+                <RotateCcw className="w-4 h-4" />
+                重新学习
+              </button>
+              <button
+                onClick={() => navigate('/', { state: { activeTab: 'passage' } })}
+                className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-gray-50"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                返回短文列表
+              </button>
+            </>
+          ) : (
+            <>
             <button 
               onClick={() => applyRandomHints(1)} 
               className="flex items-center justify-center gap-2 rounded-lg bg-amber-100 px-4 py-2 text-sm font-medium text-amber-700 transition-colors hover:bg-amber-200"
@@ -654,16 +948,20 @@ export function TypingPractice({ startWord, initialWordData }: TypingPracticePro
             disabled={aiLoading}
             className={`flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white shadow-md transition-all hover:bg-blue-700 hover:shadow-lg ${aiLoading ? 'cursor-not-allowed opacity-50' : ''}`}
           >
-            <span>{aiLoading ? '加载中...' : '下一题'}</span>
-            {!aiLoading && <SkipForward className="w-4 h-4" />}
+            <span>{aiLoading ? '加载中...' : isPassageMode && showAnswer && aiIndex === passagePracticeItems.length - 1 ? '查看回顾' : '下一题'}</span>
+            {!aiLoading && (isPassageMode && showAnswer && aiIndex === passagePracticeItems.length - 1 ? <ListChecks className="w-4 h-4" /> : <SkipForward className="w-4 h-4" />)}
           </button>
+            </>
+          )}
         </div>
       </div>
       
       {/* Keyboard Shortcuts Hint */}
-      <div className="mt-6 text-center text-xs leading-relaxed text-gray-400">
-        快捷键：Enter 提交 / 下一题 &middot; 数字键 1-9 提示 &middot; Space 播放发音
-      </div>
+      {!showPassageReview && (
+        <div className="mt-6 text-center text-xs leading-relaxed text-gray-400">
+          快捷键：Enter 提交 / 下一题 &middot; 数字键 1-9 提示 &middot; Space 播放发音
+        </div>
+      )}
 
       <WordDetailModal 
         word={selectedWord || ''}

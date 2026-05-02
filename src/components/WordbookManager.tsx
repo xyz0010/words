@@ -8,7 +8,7 @@ interface WordbookManagerProps {
 }
 
 export function WordbookManager({ onPracticeWord }: WordbookManagerProps) {
-  const { state, removeWord, setFilter, clearFilter } = useWordbook();
+  const { state, removeWord, setFilter, clearFilter, isSyncing, syncError, refreshWordbook } = useWordbook();
   const [showFilters, setShowFilters] = useState(false);
   const [sortType, setSortType] = useState<'date_desc' | 'date_asc' | 'az' | 'za'>('date_desc');
 
@@ -215,9 +215,21 @@ export function WordbookManager({ onPracticeWord }: WordbookManagerProps) {
           共 {filteredWords.length} 个单词
         </div>
 
+        {syncError && (
+          <div className="mb-4 flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700 sm:flex-row sm:items-center sm:justify-between">
+            <span>{syncError}</span>
+            <button
+              onClick={() => void refreshWordbook()}
+              className="rounded-md bg-white px-3 py-2 text-amber-700 transition hover:bg-amber-100"
+            >
+              重试同步
+            </button>
+          </div>
+        )}
+
         {filteredWords.length === 0 ? (
           <div className="text-center py-8 text-gray-500">
-            <p className="text-lg">暂无单词</p>
+            <p className="text-lg">{isSyncing ? '正在同步单词本...' : '暂无单词'}</p>
             <p className="text-sm mt-2">在首页查询单词并添加到单词本</p>
           </div>
         ) : (
@@ -252,8 +264,9 @@ export function WordbookManager({ onPracticeWord }: WordbookManagerProps) {
                       <MessageSquare className="w-4 h-4" /> 例句练习
                     </button>
                     <button
-                      onClick={() => removeWord(word.word)}
-                      className="rounded px-3 py-2 text-sm text-red-600 transition-colors hover:bg-red-50 hover:text-red-800"
+                      onClick={() => void removeWord(word.word)}
+                      disabled={isSyncing}
+                      className="rounded px-3 py-2 text-sm text-red-600 transition-colors hover:bg-red-50 hover:text-red-800 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       移除
                     </button>

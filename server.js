@@ -3,6 +3,14 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
+import {
+  deleteWord,
+  getWordbook,
+  getWordbookDataFilePath,
+  importWords,
+  resolveUserId,
+  upsertWord,
+} from './server/wordbookStore.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +36,111 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'dist')));
 
+app.get('/api/health', async (_req, res) => {
+  res.json({
+    ok: true,
+    service: 'words-api',
+    dataFile: getWordbookDataFilePath(),
+  });
+});
+
+app.get('/api/wordbook', async (req, res) => {
+  try {
+    const userId = resolveUserId(req.query.userId);
+    const result = await getWordbook(userId);
+    res.json(result);
+  } catch (error) {
+    console.error('Failed to load wordbook:', error);
+    res.status(500).json({ error: 'wordbook_load_failed' });
+  }
+});
+
+app.post('/api/wordbook', async (req, res) => {
+  try {
+    const userId = resolveUserId(req.body?.userId);
+    const word = await upsertWord(userId, req.body?.word);
+    res.status(201).json({ userId, word });
+  } catch (error) {
+    console.error('Failed to save word:', error);
+    res.status(400).json({ error: 'wordbook_save_failed' });
+  }
+});
+
+app.post('/api/wordbook/import', async (req, res) => {
+  try {
+    const userId = resolveUserId(req.body?.userId);
+    const result = await importWords(userId, req.body?.words);
+    res.status(201).json(result);
+  } catch (error) {
+    console.error('Failed to import wordbook:', error);
+    res.status(400).json({ error: 'wordbook_import_failed' });
+  }
+});
+
+app.delete('/api/wordbook/:word', async (req, res) => {
+  try {
+    const userId = resolveUserId(req.query.userId);
+    const word = decodeURIComponent(String(req.params.word || ''));
+    const result = await deleteWord(userId, word);
+    res.json(result);
+  } catch (error) {
+    console.error('Failed to delete word:', error);
+    res.status(400).json({ error: 'wordbook_delete_failed' });
+  }
+});
+
+function extractDictTranslation(data) {
+  let translation = '';
+  try {
+    const trs = data.ec?.word?.[0]?.trs?.[0]?.tr?.[0]?.l?.i?.[0];
+    if (trs) translation = trs;
+  } catch {}
+
+  if (!translation && data.web_trans?.['web-translation']?.[0]?.trans?.[0]?.value) {
+    translation = data.web_trans['web-translation'][0].trans[0].value;
+  }
+
+  if (!translation && data.fanyi?.tran) {
+    translation = data.fanyi.tran;
+  }
+
+  return translation;
+}
+
+function truncate(text) {
+  if (text.length <= 20) return text;
+  return `${text.slice(0, 10)}${text.length}${text.slice(-10)}`;
+}
+
+async function fetchSentenceTranslation(q) {
+  const body = new URLSearchParams({
+    i: q,
+    from: 'en',
+    to: 'zh-CHS',
+    smartresult: 'dict',
+    client: 'fanyideskweb',
+    doctype: 'json',
+    version: '2.1',
+    keyfrom: 'fanyi.web',
+    action: 'FY_BY_REALTIME',
+  });
+
+  const resp = await fetch('https://fanyi.youdao.com/translate_o?smartresult=dict&smartresult=rule', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      'User-Agent': 'Mozilla/5.0',
+      Referer: 'https://fanyi.youdao.com/',
+      Origin: 'https://fanyi.youdao.com',
+    },
+    body: body.toString(),
+  });
+
+  const data = await resp.json();
+  const lines = Array.isArray(data?.translateResult) ? data.translateResult : [];
+  return lines.flat().map(item => item?.tgt || '').join('').trim();
+}
+
 // Youdao Proxy
 const YOUDAO_APP_KEY = (process.env.YOUDAO_APP_KEY || '').trim();
 const YOUDAO_APP_SECRET = (process.env.YOUDAO_APP_SECRET || '').trim();
@@ -36,14 +149,51 @@ app.post('/api/youdao/translate', async (req, res) => {
   try {
     const payload = req.body || {};
     const q = String(payload.q || '').trim();
-    const from = String(payload.from || 'en');
-    const to = String(payload.to || 'zh-CHS');
-    const devKey = typeof payload.devKey === 'string' ? payload.devKey.trim() : '';
-    const devSecret = typeof payload.devSecret === 'string' ? payload.devSecret.trim() : '';
+    const mode = String(payload.mode || 'translate').trim();
 
     if (!q) {
       res.status(400).json({ error: 'q_required' });
       return;
+    }
+
+    if (mode !== 'dict' && (!YOUDAO_APP_KEY || !YOUDAO_APP_SECRET)) {
+      res.json({ translation: '', source: 'env_missing' });
+      return;
+    }
+
+    if (mode !== 'dict') {
+      const salt = `${Date.now()}`;
+      const curtime = `${Math.floor(Date.now() / 1000)}`;
+      const sign = crypto
+        .createHash('sha256')
+        .update(`${YOUDAO_APP_KEY}${truncate(q)}${salt}${curtime}${YOUDAO_APP_SECRET}`)
+        .digest('hex');
+
+      const officialResp = await fetch('https://openapi.youdao.com/api', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          q,
+          from: 'en',
+          to: 'zh-CHS',
+          appKey: YOUDAO_APP_KEY,
+          salt,
+          sign,
+          signType: 'v3',
+          curtime,
+        }).toString(),
+      });
+      const officialData = await officialResp.json();
+      const officialTranslation = Array.isArray(officialData?.translation)
+        ? officialData.translation.join(' ').trim()
+        : '';
+
+      if (officialTranslation) {
+        res.json({ translation: officialTranslation, raw: officialData, source: 'youdao_official' });
+        return;
+      }
     }
 
     // Switch to Youdao Web API for better dictionary data
@@ -58,24 +208,19 @@ app.post('/api/youdao/translate', async (req, res) => {
     const data = await resp.json();
     console.log('Youdao Web API Response for:', q);
 
-    let translation = '';
-    // Try to extract basic translation from 'ec' (English-Chinese)
-    try {
-        const trs = data.ec?.word?.[0]?.trs?.[0]?.tr?.[0]?.l?.i?.[0];
-        if (trs) translation = trs;
-    } catch {}
+    let translation = extractDictTranslation(data);
+    let source = 'youdao_web';
 
-    // Fallback to 'web_trans'
-    if (!translation && data.web_trans?.['web-translation']?.[0]?.trans?.[0]?.value) {
-        translation = data.web_trans['web-translation'][0].trans[0].value;
-    }
-    
-    // Fallback to 'fanyi' translation if available
-    if (!translation && data.fanyi?.tran) {
-        translation = data.fanyi.tran;
+    if (!translation) {
+      try {
+        translation = await fetchSentenceTranslation(q);
+        if (translation) source = 'youdao_sentence';
+      } catch (fallbackError) {
+        console.error('Sentence translation fallback failed:', fallbackError);
+      }
     }
 
-    res.json({ translation, raw: data, source: 'youdao_web' });
+    res.json({ translation, raw: data, source });
   } catch (error) {
     console.error('Proxy Error:', error);
     res.json({ translation: '', source: 'internal_error' });

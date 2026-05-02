@@ -15,7 +15,7 @@ export function WordSearch({ onWordFound }: WordSearchProps) {
   const [error, setError] = useState('');
   const [wordData, setWordData] = useState<WordDefinition | null>(null);
   
-  const { addWord, removeWord, isInWordbook } = useWordbook();
+  const { addWord, removeWord, isInWordbook, isSyncing, syncError } = useWordbook();
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -59,13 +59,13 @@ export function WordSearch({ onWordFound }: WordSearchProps) {
     }
   };
 
-  const toggleBookmark = () => {
+  const toggleBookmark = async () => {
     if (!wordData) return;
     
     if (isInWordbook(wordData.word)) {
-      removeWord(wordData.word);
+      await removeWord(wordData.word);
     } else {
-      addWord(wordData);
+      await addWord(wordData);
     }
   };
 
@@ -108,6 +108,12 @@ export function WordSearch({ onWordFound }: WordSearchProps) {
       {error && (
         <div className="p-4 bg-red-50 text-red-600 rounded-xl border border-red-100 flex items-center animate-in fade-in slide-in-from-top-2">
           <span className="mr-2">⚠️</span> {error}
+        </div>
+      )}
+
+      {syncError && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-700">
+          {syncError}
         </div>
       )}
 
@@ -158,12 +164,13 @@ export function WordSearch({ onWordFound }: WordSearchProps) {
                   </div>
                   <div className="flex w-full gap-3 sm:w-auto">
                       <button
-                        onClick={toggleBookmark}
+                        onClick={() => void toggleBookmark()}
+                        disabled={isSyncing}
                         className={`flex flex-1 items-center justify-center rounded-xl border p-3 shadow-sm transition-all duration-200 sm:flex-none ${
                           isInWordbook(wordData.word)
                             ? 'bg-blue-100 text-blue-600 border-blue-200 hover:bg-blue-200'
                             : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600 hover:border-slate-300'
-                        }`}
+                        } ${isSyncing ? 'cursor-not-allowed opacity-60' : ''}`}
                         title={isInWordbook(wordData.word) ? '从单词本移除' : '添加到单词本'}
                       >
                         {isInWordbook(wordData.word) ? (

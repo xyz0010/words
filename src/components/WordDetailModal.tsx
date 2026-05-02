@@ -15,7 +15,7 @@ export function WordDetailModal({ word, isOpen, onClose }: WordDetailModalProps)
   const [wordData, setWordData] = useState<WordDefinition | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const { addWord, removeWord, isInWordbook } = useWordbook();
+  const { addWord, removeWord, isInWordbook, isSyncing, syncError } = useWordbook();
 
   useEffect(() => {
     if (isOpen && word) {
@@ -46,13 +46,13 @@ export function WordDetailModal({ word, isOpen, onClose }: WordDetailModalProps)
     }
   };
 
-  const toggleBookmark = () => {
+  const toggleBookmark = async () => {
     if (!wordData) return;
     
     if (isInWordbook(wordData.word)) {
-      removeWord(wordData.word);
+      await removeWord(wordData.word);
     } else {
-      addWord(wordData);
+      await addWord(wordData);
     }
   };
 
@@ -88,6 +88,11 @@ export function WordDetailModal({ word, isOpen, onClose }: WordDetailModalProps)
             </div>
           ) : wordData ? (
             <div className="space-y-8">
+              {syncError && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                  {syncError}
+                </div>
+              )}
               {/* Header Area */}
               <div className="-mx-4 -mt-0 border-b border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50 px-4 py-6 sm:-mx-8 sm:px-8 sm:py-8">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -133,12 +138,13 @@ export function WordDetailModal({ word, isOpen, onClose }: WordDetailModalProps)
                   </div>
                   <div className="flex w-full gap-3 sm:w-auto">
                     <button
-                      onClick={toggleBookmark}
+                      onClick={() => void toggleBookmark()}
+                      disabled={isSyncing}
                       className={`flex flex-1 items-center justify-center rounded-xl border p-3 shadow-sm transition-all duration-200 sm:flex-none ${
                         isInWordbook(wordData.word)
                           ? 'bg-blue-100 text-blue-600 border-blue-200 hover:bg-blue-200'
                           : 'bg-white text-slate-400 border-slate-200 hover:text-slate-600 hover:border-slate-300'
-                      }`}
+                      } ${isSyncing ? 'cursor-not-allowed opacity-60' : ''}`}
                       title={isInWordbook(wordData.word) ? '从单词本移除' : '添加到单词本'}
                     >
                       {isInWordbook(wordData.word) ? (

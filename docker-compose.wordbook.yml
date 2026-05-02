@@ -1,0 +1,21 @@
+services:
+  words-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: words-app
+    restart: unless-stopped
+    ports:
+      - "${WORDS_APP_PORT:-8080}:80"
+    env_file:
+      - .env.local
+    environment:
+      PORT: 80
+      WORDS_DATA_DIR: /app/data
+      DEFAULT_WORDS_USER_ID: ${DEFAULT_WORDS_USER_ID:-demo-user}
+      VITE_WORDS_USER_ID: ${VITE_WORDS_USER_ID:-demo-user}
+    volumes:
+      - words_data:/app/data
+
+volumes:
+  words_data:

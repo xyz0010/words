@@ -15,10 +15,14 @@ COPY --from=builder /app/dist ./dist
 
 # Copy server script and package files
 COPY server.js ./
+COPY server ./server
 COPY package.json package-lock.json ./
 
 # Install production dependencies
 RUN npm ci --omit=dev
+
+# Ensure data directory exists for server-side wordbook storage
+RUN mkdir -p /app/data
 
 # Expose port 80
 EXPOSE 80
