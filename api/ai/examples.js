@@ -1,3 +1,5 @@
+import { resolveCozeAuthHeader } from '../../server/cozeOAuth.js';
+
 async function readJsonBody(req) {
   if (req.body && typeof req.body === 'object') return req.body;
   if (typeof req.body === 'string') {
@@ -138,11 +140,10 @@ export default async function handler(req, res) {
       res.status(400).json({ error: 'word_required' });
       return;
     }
-    const COZE_TOKEN = (process.env.COZE_TOKEN || '').trim();
     const COZE_BASE_URL = (process.env.COZE_BASE_URL || 'https://api.coze.cn').trim();
     const COZE_WORKFLOW_ID = (process.env.COZE_WORKFLOW_ID || '').trim();
-    const useToken = devToken || COZE_TOKEN;
-    if (!useToken || !COZE_WORKFLOW_ID) {
+    const auth = await resolveCozeAuthHeader({ env: process.env, devToken });
+    if (!auth.token || !COZE_WORKFLOW_ID) {
       res.status(200).json({ sentences: [], source: 'env_missing' });
       return;
     }
@@ -162,7 +163,7 @@ JSON 结构如下：
     const resp = await fetch(url, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${useToken}`,
+        Authorization: `Bearer ${auth.token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -182,7 +183,8 @@ JSON 结构如下：
       debug: {
         url,
         workflow: COZE_WORKFLOW_ID,
-        token_head: masked(useToken),
+        token_source: auth.source,
+        token_head: masked(auth.token),
         status: resp.status,
         statusText: resp.statusText,
       },

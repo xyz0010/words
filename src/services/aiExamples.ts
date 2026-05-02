@@ -54,7 +54,7 @@ export async function fetchAiExamples(
       } catch {}
     }
     if (source === 'env_missing') {
-      throw new Error('未配置AI环境变量，请在 .env.local 设置 COZE_TOKEN/COZE_APP_ID/COZE_WORKFLOW_ID');
+      throw new Error('未配置 AI 鉴权环境变量，请在 .env.local 设置 Coze OAuth JWT 或 COZE_TOKEN');
     }
     if (source === 'internal_error') {
       throw new Error('代理内部错误，稍后重试或检查开发服务器日志');

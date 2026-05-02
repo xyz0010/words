@@ -3,6 +3,15 @@ import react from '@vitejs/plugin-react'
 import tsconfigPaths from "vite-tsconfig-paths";
 import type { Plugin } from 'vite';
 import crypto from 'node:crypto';
+import { resolveCozeAuthHeader } from './server/cozeOAuth.js';
+import {
+  createSession,
+  extractBearerToken,
+  getUserByToken,
+  loginUser,
+  registerUser,
+  revokeSession,
+} from './server/authStore.js';
 import { deleteWord, getWordbook, importWords, resolveUserId, upsertWord } from './server/wordbookStore.js';
 
 function extractDictTranslation(data: any): string {
@@ -58,10 +67,8 @@ async function fetchSentenceTranslation(q: string): Promise<string> {
 }
 
 function cozeExamplesPlugin(env: Record<string, string>): Plugin {
-  const COZE_TOKEN = (env.COZE_TOKEN || '').trim();
   const COZE_BASE_URL = (env.COZE_BASE_URL || 'https://api.coze.cn').trim();
   const COZE_WORKFLOW_ID = (env.COZE_WORKFLOW_ID || '').trim();
-  const COZE_APP_ID = (env.COZE_APP_ID || '').trim();
   return {
     name: 'coze-examples-proxy',
     configureServer(server) {
@@ -89,8 +96,8 @@ function cozeExamplesPlugin(env: Record<string, string>): Plugin {
               res.setHeader('Content-Type', 'application/json');
               return res.end(JSON.stringify({ error: 'word_required' }));
             }
-            const useToken = devToken || COZE_TOKEN;
-            if (!useToken || !COZE_WORKFLOW_ID) {
+            const auth = await resolveCozeAuthHeader({ env, devToken });
+            if (!auth.token || !COZE_WORKFLOW_ID) {
               res.statusCode = 200;
               res.setHeader('Content-Type', 'application/json');
               return res.end(JSON.stringify({ sentences: [], source: 'env_missing' }));
@@ -112,7 +119,7 @@ JSON 结构如下：
             const resp = await fetch(url, {
               method: 'POST',
               headers: {
-                Authorization: `Bearer ${useToken}`,
+                Authorization: `Bearer ${auth.token}`,
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
@@ -261,7 +268,8 @@ JSON 结构如下：
               debug: {
                 url,
                 workflow: COZE_WORKFLOW_ID,
-                token_head: masked(useToken),
+                token_source: auth.source,
+                token_head: masked(auth.token),
                 status: resp.status,
                 statusText: resp.statusText
               }
@@ -381,9 +389,95 @@ function youdaoTranslatePlugin(env: Record<string, string>): Plugin {
 }
 
 function wordbookApiPlugin(): Plugin {
+  const resolveRequestUserId = async (req: any, fallbackUserId?: string | null) => {
+    const token = extractBearerToken(req.headers?.authorization);
+    if (!token) {
+      return {
+        userId: resolveUserId(fallbackUserId),
+        authenticated: false,
+      };
+    }
+
+    const user = await getUserByToken(token);
+    if (!user) return null;
+
+    return {
+      userId: user.id,
+      user,
+      authenticated: true,
+    };
+  };
+
   return {
     name: 'wordbook-api-proxy',
     configureServer(server) {
+      server.middlewares.use('/api/auth/register', async (req, res, next) => {
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (chunk) => (body += chunk));
+        req.on('end', async () => {
+          try {
+            const payload = JSON.parse(body || '{}');
+            const user = await registerUser(payload.username, payload.password);
+            if (!user) {
+              throw new Error('register_failed');
+            }
+            const session = await createSession(user.id);
+            res.statusCode = 201;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify(session));
+          } catch (error: any) {
+            const code = error?.message === 'username_exists' ? 409 : 400;
+            res.statusCode = code;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ error: error?.message || 'register_failed' }));
+          }
+        });
+      });
+
+      server.middlewares.use('/api/auth/login', async (req, res, next) => {
+        if (req.method !== 'POST') return next();
+        let body = '';
+        req.on('data', (chunk) => (body += chunk));
+        req.on('end', async () => {
+          try {
+            const payload = JSON.parse(body || '{}');
+            const user = await loginUser(payload.username, payload.password);
+            if (!user) {
+              throw new Error('login_failed');
+            }
+            const session = await createSession(user.id);
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify(session));
+          } catch (error: any) {
+            res.statusCode = error?.message === 'invalid_credentials' ? 401 : 400;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ error: error?.message || 'login_failed' }));
+          }
+        });
+      });
+
+      server.middlewares.use('/api/auth/me', async (req, res, next) => {
+        if (req.method !== 'GET') return next();
+        const token = extractBearerToken(req.headers?.authorization);
+        const user = await getUserByToken(token);
+        res.statusCode = user ? 200 : 401;
+        res.setHeader('Content-Type', 'application/json');
+        return res.end(JSON.stringify(user ? { user } : { error: 'unauthorized' }));
+      });
+
+      server.middlewares.use('/api/auth/logout', async (req, res, next) => {
+        if (req.method !== 'POST') return next();
+        const token = extractBearerToken(req.headers?.authorization);
+        if (token) {
+          await revokeSession(token);
+        }
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        return res.end(JSON.stringify({ ok: true }));
+      });
+
       server.middlewares.use('/api/health', async (req, res, next) => {
         if (req.method !== 'GET') return next();
         res.statusCode = 200;
@@ -398,8 +492,13 @@ function wordbookApiPlugin(): Plugin {
         req.on('end', async () => {
           try {
             const payload = JSON.parse(body || '{}');
-            const userId = resolveUserId(payload.userId);
-            const result = await importWords(userId, payload.words);
+            const resolved = await resolveRequestUserId(req, payload.userId);
+            if (!resolved) {
+              res.statusCode = 401;
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(JSON.stringify({ error: 'unauthorized' }));
+            }
+            const result = await importWords(resolved.userId, payload.words);
             res.statusCode = 201;
             res.setHeader('Content-Type', 'application/json');
             return res.end(JSON.stringify(result));
@@ -418,8 +517,13 @@ function wordbookApiPlugin(): Plugin {
         if (req.method === 'GET') {
           try {
             const url = new URL(req.url || '', 'http://local');
-            const userId = resolveUserId(url.searchParams.get('userId'));
-            const result = await getWordbook(userId);
+            const resolved = await resolveRequestUserId(req, url.searchParams.get('userId'));
+            if (!resolved) {
+              res.statusCode = 401;
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(JSON.stringify({ error: 'unauthorized' }));
+            }
+            const result = await getWordbook(resolved.userId);
             res.statusCode = 200;
             res.setHeader('Content-Type', 'application/json');
             return res.end(JSON.stringify(result));
@@ -436,11 +540,16 @@ function wordbookApiPlugin(): Plugin {
         req.on('end', async () => {
           try {
             const payload = JSON.parse(body || '{}');
-            const userId = resolveUserId(payload.userId);
-            const word = await upsertWord(userId, payload.word);
+            const resolved = await resolveRequestUserId(req, payload.userId);
+            if (!resolved) {
+              res.statusCode = 401;
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(JSON.stringify({ error: 'unauthorized' }));
+            }
+            const word = await upsertWord(resolved.userId, payload.word);
             res.statusCode = 201;
             res.setHeader('Content-Type', 'application/json');
-            return res.end(JSON.stringify({ userId, word }));
+            return res.end(JSON.stringify({ userId: resolved.userId, word }));
           } catch (error) {
             console.error('Wordbook save error:', error);
             res.statusCode = 400;
@@ -455,8 +564,13 @@ function wordbookApiPlugin(): Plugin {
         try {
           const url = new URL(req.url || '', 'http://local');
           const word = decodeURIComponent(url.pathname.replace(/^\/api\/wordbook\//, ''));
-          const userId = resolveUserId(url.searchParams.get('userId'));
-          const result = await deleteWord(userId, word);
+          const resolved = await resolveRequestUserId(req, url.searchParams.get('userId'));
+          if (!resolved) {
+            res.statusCode = 401;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ error: 'unauthorized' }));
+          }
+          const result = await deleteWord(resolved.userId, word);
           res.statusCode = 200;
           res.setHeader('Content-Type', 'application/json');
           return res.end(JSON.stringify(result));

@@ -13,6 +13,10 @@
 
 ## 当前接口
 
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+- `POST /api/auth/logout`
 - `GET /api/health`
 - `GET /api/wordbook?userId=demo-user`
 - `POST /api/wordbook`
@@ -139,7 +143,6 @@ cp .env.example .env.local
 ```env
 COZE_TOKEN=...
 COZE_WORKFLOW_ID=...
-COZE_APP_ID=...
 YOUDAO_APP_KEY=...
 YOUDAO_APP_SECRET=...
 DEFAULT_WORDS_USER_ID=demo-user
@@ -147,6 +150,21 @@ VITE_WORDS_USER_ID=demo-user
 WORDS_DATA_DIR=/app/data
 WORDS_APP_PORT=8080
 ```
+
+如果你的 Coze `PAT Token` 经常失效，建议改成 OAuth JWT 自动续期，增加这些配置：
+
+```env
+COZE_OAUTH_CLIENT_ID=你的OAuth应用ID
+COZE_OAUTH_KID=你的公钥指纹
+COZE_OAUTH_PRIVATE_KEY=你的PEM私钥内容
+COZE_OAUTH_TOKEN_TTL=3600
+```
+
+说明：
+
+- 当前项目已支持 Coze OAuth JWT 自动换取 `access_token`
+- 会在服务端内存中缓存 token，并在过期前自动重新申请
+- 如果同时配置了 OAuth 和旧的 `COZE_TOKEN`，会优先使用 OAuth
 
 ### 3. 启动容器
 
@@ -179,9 +197,24 @@ http://你的服务器IP:8080/api/health
 
 ## 当前阶段的限制
 
-- 还没有正式用户登录，当前先用 `demo-user` 作为默认用户
+- 已支持最小账号体系：用户名 + 密码
+- 未登录时仍可继续用 `demo-user` 作为兼容用户
 - 还没有接 MySQL，服务端数据先保存在 JSON 文件中
 - 还没有小程序接入，当前先让网页端完成服务端读写
+
+## 最小登录使用方式
+
+当前前端首页右上角已经提供：
+
+- `登录 / 注册`
+- 登录后显示当前用户名
+- 退出登录
+
+规则：
+
+- 登录后，单词本按账号隔离
+- 未登录时，仍会使用 `demo-user`
+- 如果你想验证多用户隔离，可以注册两个不同账号分别测试
 
 ## 下一步建议
 

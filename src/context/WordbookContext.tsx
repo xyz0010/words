@@ -7,6 +7,7 @@ import {
   removeWordFromWordbook,
   saveWordToWordbook,
 } from '../services/wordbook';
+import { useAuth } from './AuthContext';
 
 interface WordbookAction {
   type: string;
@@ -59,6 +60,7 @@ function wordbookReducer(state: WordbookState, action: WordbookAction): Wordbook
 const WordbookContext = createContext<WordbookContextType | undefined>(undefined);
 
 export function WordbookProvider({ children }: { children: React.ReactNode }) {
+  const { token, user } = useAuth();
   const hasLoadedRef = useRef(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState('');
@@ -121,10 +123,11 @@ export function WordbookProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    if (hasLoadedRef.current) return;
-    hasLoadedRef.current = true;
+    if (!hasLoadedRef.current) {
+      hasLoadedRef.current = true;
+    }
     void refreshWordbook();
-  }, []);
+  }, [token, user]);
 
   const addWord = async (word: WordDefinition) => {
     if (state.words.some(w => w.word.toLowerCase() === word.word.toLowerCase())) return;

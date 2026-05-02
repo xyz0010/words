@@ -3,6 +3,16 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
+import { resolveCozeAuthHeader } from './server/cozeOAuth.js';
+import {
+  createSession,
+  extractBearerToken,
+  getAuthDataFilePath,
+  getUserByToken,
+  loginUser,
+  registerUser,
+  revokeSession,
+} from './server/authStore.js';
 import {
   deleteWord,
   getWordbook,
@@ -23,6 +33,7 @@ dotenv.config({ path: envLocalPath });
 dotenv.config({ path: envPath });
 
 console.log('Environment variables loaded from:', envLocalPath, 'and', envPath);
+console.log('COZE OAuth configured:', !!process.env.COZE_OAUTH_CLIENT_ID && !!process.env.COZE_OAUTH_KID);
 console.log('COZE_TOKEN set:', !!process.env.COZE_TOKEN);
 console.log('COZE_WORKFLOW_ID set:', !!process.env.COZE_WORKFLOW_ID);
 
@@ -41,13 +52,101 @@ app.get('/api/health', async (_req, res) => {
     ok: true,
     service: 'words-api',
     dataFile: getWordbookDataFilePath(),
+    authFile: getAuthDataFilePath(),
   });
+});
+
+async function resolveRequestUserId(req, fallbackUserId) {
+  const token = extractBearerToken(req.headers.authorization);
+  if (!token) {
+    return {
+      userId: resolveUserId(fallbackUserId),
+      authenticated: false,
+    };
+  }
+
+  const user = await getUserByToken(token);
+  if (!user) {
+    return null;
+  }
+
+  return {
+    userId: user.id,
+    user,
+    authenticated: true,
+  };
+}
+
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const user = await registerUser(req.body?.username, req.body?.password);
+    const session = await createSession(user.id);
+    res.status(201).json(session);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'username_exists') {
+      res.status(409).json({ error: 'username_exists' });
+      return;
+    }
+    if (error instanceof Error && (error.message === 'invalid_username' || error.message === 'invalid_password')) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
+    console.error('Failed to register user:', error);
+    res.status(400).json({ error: 'register_failed' });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const user = await loginUser(req.body?.username, req.body?.password);
+    const session = await createSession(user.id);
+    res.json(session);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'invalid_credentials') {
+      res.status(401).json({ error: 'invalid_credentials' });
+      return;
+    }
+    console.error('Failed to login user:', error);
+    res.status(400).json({ error: 'login_failed' });
+  }
+});
+
+app.get('/api/auth/me', async (req, res) => {
+  try {
+    const token = extractBearerToken(req.headers.authorization);
+    const user = await getUserByToken(token);
+    if (!user) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    res.json({ user });
+  } catch (error) {
+    console.error('Failed to get current user:', error);
+    res.status(401).json({ error: 'unauthorized' });
+  }
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    const token = extractBearerToken(req.headers.authorization);
+    if (token) {
+      await revokeSession(token);
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Failed to logout:', error);
+    res.status(400).json({ error: 'logout_failed' });
+  }
 });
 
 app.get('/api/wordbook', async (req, res) => {
   try {
-    const userId = resolveUserId(req.query.userId);
-    const result = await getWordbook(userId);
+    const resolved = await resolveRequestUserId(req, req.query.userId);
+    if (!resolved) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    const result = await getWordbook(resolved.userId);
     res.json(result);
   } catch (error) {
     console.error('Failed to load wordbook:', error);
@@ -57,9 +156,13 @@ app.get('/api/wordbook', async (req, res) => {
 
 app.post('/api/wordbook', async (req, res) => {
   try {
-    const userId = resolveUserId(req.body?.userId);
-    const word = await upsertWord(userId, req.body?.word);
-    res.status(201).json({ userId, word });
+    const resolved = await resolveRequestUserId(req, req.body?.userId);
+    if (!resolved) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    const word = await upsertWord(resolved.userId, req.body?.word);
+    res.status(201).json({ userId: resolved.userId, word });
   } catch (error) {
     console.error('Failed to save word:', error);
     res.status(400).json({ error: 'wordbook_save_failed' });
@@ -68,8 +171,12 @@ app.post('/api/wordbook', async (req, res) => {
 
 app.post('/api/wordbook/import', async (req, res) => {
   try {
-    const userId = resolveUserId(req.body?.userId);
-    const result = await importWords(userId, req.body?.words);
+    const resolved = await resolveRequestUserId(req, req.body?.userId);
+    if (!resolved) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    const result = await importWords(resolved.userId, req.body?.words);
     res.status(201).json(result);
   } catch (error) {
     console.error('Failed to import wordbook:', error);
@@ -79,9 +186,13 @@ app.post('/api/wordbook/import', async (req, res) => {
 
 app.delete('/api/wordbook/:word', async (req, res) => {
   try {
-    const userId = resolveUserId(req.query.userId);
+    const resolved = await resolveRequestUserId(req, req.query.userId);
+    if (!resolved) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
     const word = decodeURIComponent(String(req.params.word || ''));
-    const result = await deleteWord(userId, word);
+    const result = await deleteWord(resolved.userId, word);
     res.json(result);
   } catch (error) {
     console.error('Failed to delete word:', error);
@@ -228,10 +339,8 @@ app.post('/api/youdao/translate', async (req, res) => {
 });
 
 // Coze Proxy
-const COZE_TOKEN = (process.env.COZE_TOKEN || 'pat_2SFDcSuIiexKZAASoH5KKbd0GExZHfiCOdkAPzy7T14Rd7H4rjaBGaEH5Kfq8gtu').trim();
 const COZE_BASE_URL = (process.env.COZE_BASE_URL || 'https://api.coze.cn').trim();
 const COZE_WORKFLOW_ID = (process.env.COZE_WORKFLOW_ID || '7573516923795980294').trim();
-const COZE_APP_ID = (process.env.COZE_APP_ID || '7573162453509734415').trim();
 
 app.post('/api/ai/examples', async (req, res) => {
   try {
@@ -254,8 +363,8 @@ app.post('/api/ai/examples', async (req, res) => {
       return;
     }
 
-    const useToken = devToken || COZE_TOKEN;
-    if (!useToken || !COZE_WORKFLOW_ID) {
+    const auth = await resolveCozeAuthHeader({ env: process.env, devToken });
+    if (!auth.token || !COZE_WORKFLOW_ID) {
       res.json({ sentences: [], source: 'env_missing' });
       return;
     }
@@ -278,7 +387,7 @@ JSON 结构如下：
     const resp = await fetch(url, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${useToken}`,
+        Authorization: `Bearer ${auth.token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -398,9 +507,9 @@ JSON 结构如下：
         raw, 
         debug: { 
             url, 
-            app: COZE_APP_ID, 
             workflow: COZE_WORKFLOW_ID, 
-            token_head: masked(useToken) 
+            token_source: auth.source,
+            token_head: masked(auth.token) 
         } 
     });
 
@@ -410,7 +519,7 @@ JSON 结构如下：
   }
 });
 
-app.get('*', (req, res) => {
+app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
