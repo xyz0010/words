@@ -16,6 +16,7 @@ services:
       VITE_WORDS_USER_ID: ${VITE_WORDS_USER_ID:-demo-user}
     volumes:
       - words_data:/app/data
+      - ./secrets/coze_private_key.pem:/app/secrets/coze_private_key.pem:ro
 
 volumes:
   words_data:
