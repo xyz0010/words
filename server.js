@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
-import { resolveCozeAuthHeader } from './server/cozeOAuth.js';
+import { resolveCozeAuthHeader, forceRefreshCozeToken } from './server/cozeOAuth.js';
 import {
   createSession,
   extractBearerToken,
@@ -363,7 +363,7 @@ app.post('/api/ai/examples', async (req, res) => {
       return;
     }
 
-    const auth = await resolveCozeAuthHeader({ env: process.env, devToken });
+    let auth = await resolveCozeAuthHeader({ env: process.env, devToken });
     if (!auth.token || !COZE_WORKFLOW_ID) {
       res.json({ sentences: [], source: 'env_missing' });
       return;
@@ -384,7 +384,8 @@ JSON 结构如下：
   ]
 }`;
 
-    const resp = await fetch(url, {
+    // First request
+    let resp = await fetch(url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${auth.token}`,
@@ -396,7 +397,29 @@ JSON 结构如下：
       }),
     });
 
-    const raw = await resp.text();
+    let raw = await resp.text();
+
+    // Handle 4100: authentication invalid - auto refresh token and retry
+    if (raw.includes('"code":4100') && auth.source === 'coze_oauth' && !devToken) {
+      console.log('Coze token invalid (4100), refreshing and retrying...');
+      try {
+        const newToken = await forceRefreshCozeToken(process.env);
+        resp = await fetch(url, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${newToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            workflow_id: COZE_WORKFLOW_ID,
+            parameters: { input: prompt, nonce, hard },
+          }),
+        });
+        raw = await resp.text();
+      } catch (refreshError) {
+        console.error('Failed to refresh token:', refreshError.message);
+      }
+    }
     
     let latestContent = '';
     const lines = raw.split('\n');

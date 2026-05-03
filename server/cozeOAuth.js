@@ -87,7 +87,7 @@ async function signCozeJwt(env = process.env) {
   return `${signingInput}.${encodedSignature}`;
 }
 
-async function requestNewAccessToken(env = process.env) {
+export async function forceRefreshCozeToken(env = process.env) {
   const jwt = await signCozeJwt(env);
   const baseUrl = resolveCozeBaseUrl(env);
   const tokenUrl = `${baseUrl}/api/permission/oauth2/token`;
@@ -134,7 +134,7 @@ export async function getCozeAccessToken(options = {}) {
     return cachedAccessToken;
   }
 
-  return requestNewAccessToken(env);
+  return forceRefreshCozeToken(env);
 }
 
 export async function resolveCozeAuthHeader({ env = process.env, devToken = '' } = {}) {
