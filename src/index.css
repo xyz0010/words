@@ -41,3 +41,21 @@
 .animate-fade-in-up {
   animation: fadeInUp 0.3s ease-out forwards;
 }
+
+/* Safari mobile keyboard fix */
+html, body {
+  overscroll-behavior: none;
+}
+
+/* Prevent smooth scrolling on mobile when keyboard appears */
+@media (max-width: 640px) {
+  * {
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Fix for iOS viewport height issues */
+body {
+  min-height: 100%;
+  min-height: -webkit-fill-available;
+}

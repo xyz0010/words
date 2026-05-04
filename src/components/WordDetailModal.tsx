@@ -61,7 +61,7 @@ export function WordDetailModal({ word, isOpen, onClose }: WordDetailModalProps)
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 backdrop-blur-sm sm:p-4" onClick={onClose}>
       <div 
-        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl animate-in zoom-in-95 duration-200"
+        className="max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl animate-in zoom-in-95 duration-200 overscroll-behavior-none"
         onClick={e => e.stopPropagation()}
       >
         <div className="sticky top-0 right-0 z-10 flex justify-end p-4 bg-gradient-to-b from-white to-transparent pointer-events-none">
