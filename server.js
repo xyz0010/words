@@ -400,24 +400,33 @@ JSON 结构如下：
     let raw = await resp.text();
 
     // Handle 4100: authentication invalid - auto refresh token and retry
-    if (raw.includes('"code":4100') && auth.source === 'coze_oauth' && !devToken) {
-      console.log('Coze token invalid (4100), refreshing and retrying...');
+    // Only retry if HTTP 401 status AND JSON response has code 4100
+    if (resp.status === 401 && auth.source === 'coze_oauth' && !devToken) {
+      let isAuthError = false;
       try {
-        const newToken = await forceRefreshCozeToken(process.env);
-        resp = await fetch(url, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${newToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            workflow_id: COZE_WORKFLOW_ID,
-            parameters: { input: prompt, nonce, hard },
-          }),
-        });
-        raw = await resp.text();
-      } catch (refreshError) {
-        console.error('Failed to refresh token:', refreshError.message);
+        const errorJson = JSON.parse(raw);
+        isAuthError = errorJson.code === 4100;
+      } catch {}
+      
+      if (isAuthError) {
+        console.log('Coze token invalid (4100), refreshing and retrying...');
+        try {
+          const newToken = await forceRefreshCozeToken(process.env);
+          resp = await fetch(url, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${newToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              workflow_id: COZE_WORKFLOW_ID,
+              parameters: { input: prompt, nonce, hard },
+            }),
+          });
+          raw = await resp.text();
+        } catch (refreshError) {
+          console.error('Failed to refresh token:', refreshError.message);
+        }
       }
     }
     
