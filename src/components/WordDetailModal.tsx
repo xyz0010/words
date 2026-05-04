@@ -37,6 +37,40 @@ export function WordDetailModal({ word, isOpen, onClose }: WordDetailModalProps)
     }
   }, [isOpen, word]);
 
+  // Safari mobile keyboard jitter fix
+  useEffect(() => {
+    if (isOpen) {
+      const originalStyle = {
+        overflow: document.body.style.overflow,
+        position: document.body.style.position,
+        width: document.body.style.width,
+      };
+      
+      document.body.style.overflow = 'hidden';
+      document.body.style.position = 'fixed';
+      document.body.style.width = '100%';
+      
+      const preventScroll = (e: FocusEvent) => {
+        const target = e.target as HTMLElement;
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+          setTimeout(() => {
+            window.scrollTo(0, 0);
+            document.documentElement.scrollTop = 0;
+          }, 10);
+        }
+      };
+      
+      document.addEventListener('focusin', preventScroll, true);
+      
+      return () => {
+        document.body.style.overflow = originalStyle.overflow;
+        document.body.style.position = originalStyle.position;
+        document.body.style.width = originalStyle.width;
+        document.removeEventListener('focusin', preventScroll, true);
+      };
+    }
+  }, [isOpen]);
+
   const playAudio = (url: string) => {
     try {
       const audio = new Audio(url);

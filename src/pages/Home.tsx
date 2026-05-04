@@ -4,13 +4,51 @@ import { PassageLibrary } from '../components/PassageLibrary';
 import { AuthDialog } from '../components/AuthDialog';
 import { useAuth } from '../context/AuthContext';
 import { BookOpen, Search as SearchIcon, LogIn, LogOut } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 export default function Home() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout, isLoading } = useAuth();
+
+  // Safari mobile keyboard jitter fix - prevent viewport scrolling
+  useEffect(() => {
+    const preventScroll = (e: Event) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        // Immediately prevent any scrolling
+        e.preventDefault();
+        
+        // Force scroll position multiple times to override Safari's behavior
+        const resetScroll = () => {
+          window.scrollTo(0, 0);
+          document.documentElement.scrollTop = 0;
+          document.body.scrollTop = 0;
+        };
+        
+        resetScroll();
+        setTimeout(resetScroll, 10);
+        setTimeout(resetScroll, 50);
+        setTimeout(resetScroll, 100);
+      }
+    };
+    
+    // Also prevent touchmove on body when input is focused
+    const preventTouchMove = (e: TouchEvent) => {
+      const activeElement = document.activeElement;
+      if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+        e.preventDefault();
+      }
+    };
+    
+    document.addEventListener('focusin', preventScroll, true);
+    document.addEventListener('touchmove', preventTouchMove, { passive: false });
+    return () => {
+      document.removeEventListener('focusin', preventScroll, true);
+      document.removeEventListener('touchmove', preventTouchMove);
+    };
+  }, []);
   const [activeTab, setActiveTab] = useState<'search' | 'wordbook' | 'passage'>(() => {
     const tab = location.state?.activeTab;
     return tab === 'search' || tab === 'wordbook' || tab === 'passage' ? tab : 'search';
@@ -18,7 +56,7 @@ export default function Home() {
   const [isAuthDialogOpen, setIsAuthDialogOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="bg-gray-50 fixed inset-0 w-full h-full overflow-y-auto overscroll-behavior-none transform-gpu">
         <header className="bg-white shadow-sm border-b">
           <div className="max-w-6xl mx-auto px-4 py-4 sm:py-6">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

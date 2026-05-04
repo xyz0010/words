@@ -85,8 +85,12 @@ export function WordSearch({ onWordFound }: WordSearchProps) {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             placeholder="输入要查询的单词..."
-            className="w-full rounded-2xl border-2 border-slate-200 bg-white py-4 pl-12 pr-4 text-base shadow-sm transition-all placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-500/10 sm:pl-14 sm:pr-32 sm:text-lg"
+            className="w-full rounded-2xl border-2 border-slate-200 bg-white py-4 pl-12 pr-4 text-base shadow-sm transition-all placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-500/10 sm:pl-14 sm:pr-32 sm:text-lg transform-gpu"
             disabled={isLoading}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
           />
           <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 transform text-slate-400 transition-colors group-focus-within:text-blue-500 sm:left-5 sm:h-6 sm:w-6" />
           </div>
