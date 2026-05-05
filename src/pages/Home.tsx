@@ -12,42 +12,16 @@ export default function Home() {
   const location = useLocation();
   const { user, logout, isLoading } = useAuth();
 
-  // Safari mobile keyboard jitter fix - prevent viewport scrolling
+  // Safari mobile keyboard jitter fix - only prevent elastic overscroll
   useEffect(() => {
-    const preventScroll = (e: Event) => {
-      const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
-        // Immediately prevent any scrolling
-        e.preventDefault();
-        
-        // Force scroll position multiple times to override Safari's behavior
-        const resetScroll = () => {
-          window.scrollTo(0, 0);
-          document.documentElement.scrollTop = 0;
-          document.body.scrollTop = 0;
-        };
-        
-        resetScroll();
-        setTimeout(resetScroll, 10);
-        setTimeout(resetScroll, 50);
-        setTimeout(resetScroll, 100);
+    const preventOverscroll = (e: TouchEvent) => {
+      if (window.scrollY <= 0) {
+        window.scrollTo(0, 1);
       }
     };
     
-    // Also prevent touchmove on body when input is focused
-    const preventTouchMove = (e: TouchEvent) => {
-      const activeElement = document.activeElement;
-      if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
-        e.preventDefault();
-      }
-    };
-    
-    document.addEventListener('focusin', preventScroll, true);
-    document.addEventListener('touchmove', preventTouchMove, { passive: false });
-    return () => {
-      document.removeEventListener('focusin', preventScroll, true);
-      document.removeEventListener('touchmove', preventTouchMove);
-    };
+    document.addEventListener('touchmove', preventOverscroll, { passive: true });
+    return () => document.removeEventListener('touchmove', preventOverscroll);
   }, []);
   const [activeTab, setActiveTab] = useState<'search' | 'wordbook' | 'passage'>(() => {
     const tab = location.state?.activeTab;
@@ -56,7 +30,7 @@ export default function Home() {
   const [isAuthDialogOpen, setIsAuthDialogOpen] = useState(false);
 
   return (
-    <div className="bg-gray-50 fixed inset-0 w-full h-full overflow-y-auto overscroll-behavior-none transform-gpu">
+    <div className="min-h-screen bg-gray-50 overscroll-behavior-none">
         <header className="bg-white shadow-sm border-b">
           <div className="max-w-6xl mx-auto px-4 py-4 sm:py-6">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
