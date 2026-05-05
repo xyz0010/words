@@ -1,6 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import { TypingPractice } from '../components/TypingPractice';
 import { ArrowLeft } from 'lucide-react';
+import { useEffect } from 'react';
 import { Passage } from '../types/practice';
 
 export default function PracticePage() {
@@ -13,7 +14,7 @@ export default function PracticePage() {
   const title = practiceMode === 'passage' ? passage?.title || '短文学习' : '例句练习';
 
   return (
-    <div className="min-h-screen bg-gray-50 p-3 sm:p-4">
+    <div className="min-h-screen bg-gray-50 p-3 sm:p-4 overscroll-behavior-none">
       <div className="max-w-4xl mx-auto">
         <button
           onClick={() => navigate(-1)}

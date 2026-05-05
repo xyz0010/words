@@ -260,7 +260,7 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
 
   const current = practiceWords[index];
 
-  const scrollFocusedContentIntoView = (behavior: ScrollBehavior = 'smooth') => {
+  const scrollFocusedContentIntoView = (behavior: ScrollBehavior = 'auto') => {
     const activeWord = wordRefs.current[focusedIndex];
     const target = activeWord ?? inputRef.current ?? questionRef.current ?? practiceRootRef.current;
     if (!target) return;
@@ -862,6 +862,10 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
                         }}
                         className="absolute inset-0 opacity-0 cursor-text"
                         autoFocus={i === 0}
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
                       />
                     </div>
                   ))}
