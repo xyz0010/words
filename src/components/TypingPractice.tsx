@@ -261,18 +261,8 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
   const current = practiceWords[index];
 
   const scrollFocusedContentIntoView = (behavior: ScrollBehavior = 'auto') => {
-    const activeWord = wordRefs.current[focusedIndex];
-    const target = activeWord ?? inputRef.current ?? questionRef.current ?? practiceRootRef.current;
-    if (!target) return;
-
-    const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-    const rect = target.getBoundingClientRect();
-    const topSafeZone = 72;
-    const bottomSafeZone = keyboardInset > 0 ? keyboardInset + 32 : 140;
-
-    if (rect.top < topSafeZone || rect.bottom > viewportHeight - bottomSafeZone) {
-      target.scrollIntoView({ behavior, block: 'center' });
-    }
+    // Disable all scrolling for Safari keyboard jitter fix
+    return;
   };
   
   const example = useMemo(() => {
