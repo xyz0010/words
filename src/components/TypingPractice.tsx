@@ -460,6 +460,14 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
     if (isPassageMode) return;
     if (!current) return;
     if (aiLoading) return;
+
+    // 从单词本点击进入时，先等待 index 对齐到目标单词，避免先请求第一个词再请求目标词
+    if (startWord && !initialWordData) {
+      const normalizedStartWord = startWord.toLowerCase();
+      if (current.word.toLowerCase() !== normalizedStartWord) {
+        return;
+      }
+    }
     
     // 如果当前已有 AI 例句包且就是当前词的，不需要重新加载
     // 但这里简化处理：只要切换了词（key 变化），就加载
@@ -472,7 +480,7 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
         lastLoadedKeyRef.current = key;
         loadAiSentencesRef.current(scenarioStage);
     }
-  }, [startWord, current, aiPack.length, aiLoading, scenarioStage, isPassageMode]);
+  }, [startWord, initialWordData, current, aiPack.length, aiLoading, scenarioStage, isPassageMode]);
 
   // const onSubmit = async () => { ... } // Removed
 
@@ -489,7 +497,8 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
     } else {
       const nextStage = (scenarioStage + 1) % SCENARIOS.length;
       setScenarioStage(nextStage);
-      await loadAiSentences(nextStage);
+      // Let the scenarioStage effect trigger a single API request.
+      // Calling loadAiSentences here would duplicate the request.
     }
   };
 

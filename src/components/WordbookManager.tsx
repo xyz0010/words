@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { WordDefinition } from '../types/word';
 import { useWordbook } from '../context/WordbookContext';
-import { Download, Filter, X, MessageSquare, ArrowDownAZ, ArrowUpAZ, Calendar } from 'lucide-react';
+import { Download, Filter, X, MessageSquare, ArrowDownAZ, ArrowUpAZ, Calendar, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface WordbookManagerProps {
   onPracticeWord?: (word: WordDefinition) => void;
@@ -11,6 +11,12 @@ export function WordbookManager({ onPracticeWord }: WordbookManagerProps) {
   const { state, removeWord, setFilter, clearFilter, isSyncing, syncError, refreshWordbook } = useWordbook();
   const [showFilters, setShowFilters] = useState(false);
   const [sortType, setSortType] = useState<'date_desc' | 'date_asc' | 'az' | 'za'>('date_desc');
+  const [expandedWords, setExpandedWords] = useState<Record<string, boolean>>({});
+
+  const toggleExpandWord = (word: string) => {
+    const key = word.toLowerCase();
+    setExpandedWords(prev => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const filteredWords = state.words.filter(word => {
     if (state.filter.searchTerm) {
@@ -235,10 +241,22 @@ export function WordbookManager({ onPracticeWord }: WordbookManagerProps) {
         ) : (
           <div className="grid gap-4">
             {filteredWords.map((word) => (
-              <div key={word.word} className="rounded-lg border p-4 transition-shadow hover:shadow-md">
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="flex-1">
-                    <h3 className="break-words text-lg font-semibold text-gray-800">{word.word}</h3>
+              <div key={word.word} className="rounded-lg border transition-shadow hover:shadow-md">
+                <button
+                  type="button"
+                  onClick={() => toggleExpandWord(word.word)}
+                  className="flex w-full items-center justify-between gap-3 p-4 text-left"
+                >
+                  <h3 className="break-words text-lg font-semibold text-gray-800">{word.word}</h3>
+                  {expandedWords[word.word.toLowerCase()] ? (
+                    <ChevronUp className="h-5 w-5 shrink-0 text-gray-500" />
+                  ) : (
+                    <ChevronDown className="h-5 w-5 shrink-0 text-gray-500" />
+                  )}
+                </button>
+
+                {expandedWords[word.word.toLowerCase()] && (
+                  <div className="border-t px-4 pb-4 pt-3">
                     {word.phonetic && (
                       <p className="break-all text-sm italic text-gray-600">{word.phonetic}</p>
                     )}
@@ -246,32 +264,33 @@ export function WordbookManager({ onPracticeWord }: WordbookManagerProps) {
                       {word.meanings.slice(0, 2).map((meaning, index) => (
                         <div key={index} className="break-words text-sm">
                           <span className="font-medium text-blue-700 capitalize">{meaning.partOfSpeech}</span>
-                          <span className="text-gray-600 ml-2">{meaning.definitions[0]?.definition}</span>
+                          <span className="ml-2 text-gray-600">{meaning.definitions[0]?.definition}</span>
                         </div>
                       ))}
                     </div>
                     {word.dateAdded && (
-                      <p className="text-xs text-gray-500 mt-2">
+                      <p className="mt-2 text-xs text-gray-500">
                         添加于 {new Date(word.dateAdded).toLocaleDateString('zh-CN')}
                       </p>
                     )}
+
+                    <div className="mt-3 flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+                      <button
+                        onClick={() => onPracticeWord?.(word)}
+                        className="flex items-center justify-center gap-1 rounded px-3 py-2 text-sm text-blue-600 transition-colors hover:bg-blue-50 hover:text-blue-800"
+                      >
+                        <MessageSquare className="w-4 h-4" /> 例句练习
+                      </button>
+                      <button
+                        onClick={() => void removeWord(word.word)}
+                        disabled={isSyncing}
+                        className="rounded px-3 py-2 text-sm text-red-600 transition-colors hover:bg-red-50 hover:text-red-800 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        移除
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex w-full flex-col gap-2 sm:ml-4 sm:w-auto sm:flex-row sm:items-center">
-                    <button
-                      onClick={() => onPracticeWord?.(word)}
-                      className="flex items-center justify-center gap-1 rounded px-3 py-2 text-sm text-blue-600 transition-colors hover:bg-blue-50 hover:text-blue-800"
-                    >
-                      <MessageSquare className="w-4 h-4" /> 例句练习
-                    </button>
-                    <button
-                      onClick={() => void removeWord(word.word)}
-                      disabled={isSyncing}
-                      className="rounded px-3 py-2 text-sm text-red-600 transition-colors hover:bg-red-50 hover:text-red-800 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      移除
-                    </button>
-                  </div>
-                </div>
+                )}
               </div>
             ))}
           </div>
