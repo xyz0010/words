@@ -3,12 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { useWordbook } from '../context/WordbookContext';
 import { loadCustomPassages, saveCustomPassages } from '../lib/passages';
 import { translateToChinese } from '../services/translate';
-import { Volume2, X, SkipForward, Lightbulb, Loader2, RotateCcw, ListChecks, ArrowLeft } from 'lucide-react';
+import { Volume2, VolumeX, X, SkipForward, Lightbulb, Loader2, RotateCcw, ListChecks, ArrowLeft } from 'lucide-react';
 import { fetchAiExamples, AiSentenceItem } from '../services/aiExamples';
 import { WordDefinition } from '../types/word';
 import { Passage } from '../types/practice';
 import { WordDetailModal } from './WordDetailModal';
 import confetti from 'canvas-confetti';
+import { speakSentence, TTS_VOICES } from '../services/tts';
+import { playKeySound, setSoundEnabled, setupVisibilityResume } from '../services/keyboardSound';
 
 function normalizeApostrophes(s: string) {
   return s.replace(/[’‘ʼ`＇]/g, "'");
@@ -238,7 +240,6 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
   const [revealHints, setRevealHints] = useState<boolean[]>([]);
   const hintCount = 1;
   const loadAiSentencesRef = useRef(loadAiSentences);
-  const audioCtxRef = useRef<AudioContext | null>(null);
   const practiceRootRef = useRef<HTMLDivElement>(null);
   const questionRef = useRef<HTMLDivElement>(null);
   const wordRefs = useRef<Array<HTMLDivElement | null>>([]);
@@ -250,13 +251,7 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
   const [selectedWord, setSelectedWord] = useState<string | null>(null);
   const [keyboardInset, setKeyboardInset] = useState(0);
 
-  const [soundType, setSoundType] = useState<'mechanical' | 'typewriter' | 'bubble' | 'mute'>('mechanical');
-  const SOUND_TYPES = [
-    { id: 'mechanical', label: '机械' },
-    { id: 'typewriter', label: '打字机' },
-    { id: 'bubble', label: '气泡' },
-    { id: 'mute', label: '静音' },
-  ] as const;
+  const [keyboardSoundOn, setKeyboardSoundOn] = useState(true);
 
   const current = practiceWords[index];
 
@@ -436,6 +431,16 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
 
   useEffect(() => { loadAiSentencesRef.current = loadAiSentences; }, [loadAiSentences]);
 
+  // 初始化键盘音效：页面可见性恢复 & 同步开关状态
+  useEffect(() => {
+    setupVisibilityResume();
+    setSoundEnabled(keyboardSoundOn);
+  }, []);
+
+  useEffect(() => {
+    setSoundEnabled(keyboardSoundOn);
+  }, [keyboardSoundOn]);
+
   useEffect(() => {
     const init = expectedWords.map(() => '');
     setSentenceInputs(init);
@@ -527,59 +532,24 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
     try {
       const expected = aiSentence || example || current?.word || '';
       if (!expected) return;
-      const utter = new SpeechSynthesisUtterance(expected);
-      utter.lang = 'en-US';
-      speechSynthesis.cancel(); // Cancel previous
-      speechSynthesis.speak(utter);
-    } catch (err) { void err; }
+      
+      // Use Edge TTS for natural speech
+      speakSentence(expected, TTS_VOICES.usFemale).catch((err) => {
+        console.warn('Edge TTS failed, falling back to Web Speech API:', err);
+        // Fallback to Web Speech API
+        const utter = new SpeechSynthesisUtterance(expected);
+        utter.lang = 'en-US';
+        speechSynthesis.cancel();
+        speechSynthesis.speak(utter);
+      });
+    } catch (err) {
+      console.error('TTS error:', err);
+    }
   };
 
-  const playTypingSound = () => {
-    if (soundType === 'mute') return;
-    try {
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      }
-      const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') {
-        void ctx.resume();
-      }
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      
-      const t = ctx.currentTime;
-
-      if (soundType === 'mechanical') {
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(600, t);
-        osc.frequency.exponentialRampToValueAtTime(300, t + 0.05);
-        gain.gain.setValueAtTime(0.3, t);
-        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.05);
-        osc.start(t);
-        osc.stop(t + 0.05);
-      } else if (soundType === 'typewriter') {
-        osc.type = 'square';
-        osc.frequency.setValueAtTime(200, t);
-        osc.frequency.exponentialRampToValueAtTime(100, t + 0.05);
-        gain.gain.setValueAtTime(0.15, t);
-        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.05);
-        osc.start(t);
-        osc.stop(t + 0.05);
-      } else if (soundType === 'bubble') {
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(300, t);
-        osc.frequency.linearRampToValueAtTime(600, t + 0.1);
-        gain.gain.setValueAtTime(0.1, t);
-        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
-        osc.start(t);
-        osc.stop(t + 0.1);
-      }
-      
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-    } catch (e) {
-      console.error('Audio play failed', e);
-    }
+  const playTypingSound = (key: string = '') => {
+    if (!keyboardSoundOn) return;
+    void playKeySound(key || 'a');
   };
 
   // Auto-play when sentence changes in sentence mode
@@ -837,6 +807,7 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
                             return;
                           }
                           if (e.key === 'Enter') {
+                            playTypingSound('Enter');
                             e.preventDefault();
                             const allCorrect = expectedWords.every((w2, idx2) => {
                               const x = normalizeApostrophes(sentenceInputs[idx2] || '').toLowerCase();
@@ -856,6 +827,9 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
                               setWasWrong(true);
                             }
                             return;
+                          }
+                          if (e.key === 'Backspace') {
+                            playTypingSound('Backspace');
                           }
                           if (e.key === ' ') e.preventDefault();
                         }}
@@ -881,17 +855,18 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
         
         {/* Left: Sound Settings */}
         <div className="flex w-full items-center gap-3 md:w-auto">
-          <div className="flex w-full flex-wrap rounded-lg border border-gray-200 bg-white p-1 shadow-sm md:w-auto">
-            {SOUND_TYPES.map((type) => (
-              <button
-                key={type.id}
-                onClick={() => setSoundType(type.id)}
-                className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors md:flex-none ${soundType === type.id ? 'bg-slate-800 text-white' : 'text-slate-500 hover:bg-slate-100'}`}
-              >
-                {type.label}
-              </button>
-            ))}
-          </div>
+          <button
+            onClick={() => setKeyboardSoundOn(prev => !prev)}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+              keyboardSoundOn
+                ? 'border-slate-300 bg-slate-800 text-white shadow-sm'
+                : 'border-gray-200 bg-white text-slate-400 hover:bg-gray-50'
+            }`}
+            title={keyboardSoundOn ? '关闭键盘音效' : '开启键盘音效 (Cherry G80-3000)'}
+          >
+            {keyboardSoundOn ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+            <span>{keyboardSoundOn ? 'G80-3000' : '静音'}</span>
+          </button>
         </div>
 
         {/* Center: Status Messages */}

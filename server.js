@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
+import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import { resolveCozeAuthHeader, forceRefreshCozeToken } from './server/cozeOAuth.js';
 import {
   createSession,
@@ -54,6 +55,50 @@ app.get('/api/health', async (_req, res) => {
     dataFile: getWordbookDataFilePath(),
     authFile: getAuthDataFilePath(),
   });
+});
+
+// Edge TTS API - synthesize speech and return audio stream
+// Query params: text (required), voice (optional, default: en-US-AriaNeural)
+app.get('/api/tts', async (req, res) => {
+  const { text, voice = 'en-US-AriaNeural' } = req.query;
+
+  if (!text || typeof text !== 'string' || !text.trim()) {
+    res.status(400).json({ error: 'text is required' });
+    return;
+  }
+
+  // Sanitize text - remove any potentially harmful characters
+  const sanitizedText = text.trim().slice(0, 1000); // Limit to 1000 chars
+
+  try {
+    const tts = new MsEdgeTTS();
+    
+    // Use MP3 format for better browser compatibility
+    await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+
+    // Collect audio data from stream
+    const chunks = [];
+    const { audioStream } = tts.toStream(sanitizedText);
+
+    await new Promise((resolve, reject) => {
+      audioStream.on('data', (chunk) => chunks.push(chunk));
+      audioStream.on('end', () => resolve());
+      audioStream.on('error', (err) => reject(err));
+    });
+
+    const audioBuffer = Buffer.concat(chunks);
+
+    // Set appropriate headers for audio streaming
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Content-Length', audioBuffer.length);
+    res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
+    res.setHeader('X-Voice', voice);
+
+    res.send(audioBuffer);
+  } catch (error) {
+    console.error('Edge TTS error:', error);
+    res.status(500).json({ error: 'TTS synthesis failed' });
+  }
 });
 
 async function resolveRequestUserId(req, fallbackUserId) {

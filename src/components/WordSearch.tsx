@@ -4,6 +4,7 @@ import { searchWord } from '../services/dictionary';
 import { useWordbook } from '../context/WordbookContext';
 import { WordDefinition } from '../types/word';
 import { Search, Bookmark, BookmarkCheck, BookOpen, Volume2, Loader2 } from 'lucide-react';
+import { speakWord, TTS_VOICES } from '../services/tts';
 
 interface WordSearchProps {
   onWordFound?: (word: WordDefinition) => void;
@@ -31,12 +32,26 @@ export function WordSearch({ onWordFound }: WordSearchProps) {
     }
   }, [isLoading, wordData]);
 
-  const playAudio = (url: string) => {
+  const playAudio = async (type: 'us' | 'uk') => {
+    if (!wordData) return;
+    
+    const voice = type === 'us' ? TTS_VOICES.usFemale : TTS_VOICES.ukFemale;
+    const fallbackUrl = type === 'us' ? wordData.audio?.us : wordData.audio?.uk;
+    
     try {
-      const audio = new Audio(url);
-      audio.play().catch(e => console.error('Audio play failed:', e));
-    } catch (e) {
-      console.error('Audio error:', e);
+      // Use Edge TTS with fallback to Youdao audio
+      await speakWord(wordData.word, voice, fallbackUrl);
+    } catch (err) {
+      console.error('Audio playback error:', err);
+      // Final fallback: try Youdao audio directly
+      if (fallbackUrl) {
+        try {
+          const audio = new Audio(fallbackUrl);
+          await audio.play();
+        } catch {
+          console.error('Fallback audio also failed');
+        }
+      }
     }
   };
 
@@ -137,7 +152,7 @@ export function WordSearch({ onWordFound }: WordSearchProps) {
                             )}
                             {wordData.audio?.us && (
                               <button 
-                                onClick={() => playAudio(wordData.audio!.us!)}
+                                onClick={() => void playAudio('us')}
                                 className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-full transition-colors"
                                 title="美式发音"
                               >
@@ -147,7 +162,7 @@ export function WordSearch({ onWordFound }: WordSearchProps) {
                             )}
                             {wordData.audio?.uk && (
                               <button 
-                                onClick={() => playAudio(wordData.audio!.uk!)}
+                                onClick={() => void playAudio('uk')}
                                 className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-blue-50 rounded-full transition-colors"
                                 title="英式发音"
                               >
