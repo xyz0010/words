@@ -1,0 +1,25 @@
+name: Deploy to Aliyun ECS
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Deploy using SSH
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.HOST }}
+        username: ${{ secrets.USERNAME }}
+        password: ${{ secrets.PASSWORD }}
+        # key: ${{ secrets.KEY }} # 如果使用 SSH Key 请取消注释此行并注释 password
+        script: |
+          cd /opt/words
+          # 拉取最新代码
+          git pull origin main
+          # 赋予脚本执行权限（防止权限丢失）
+          chmod +x deploy.sh
+          # 执行部署脚本
+          ./deploy.sh
