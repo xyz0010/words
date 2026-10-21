@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { useWordbook } from '../context/WordbookContext';
 import { loadCustomPassages, saveCustomPassages } from '../lib/passages';
 import { translateToChinese } from '../services/translate';
-import { Volume2, VolumeX, X, SkipForward, Lightbulb, Loader2, RotateCcw, ListChecks, ArrowLeft } from 'lucide-react';
+import { Volume2, VolumeX, X, SkipForward, Lightbulb, Loader2, RotateCcw, ListChecks, ArrowLeft, Bookmark, BookmarkCheck } from 'lucide-react';
 import { fetchAiExamples, AiSentenceItem } from '../services/aiExamples';
+import { deleteFavorite, fetchFavorites, getTodayLocalDate, reportMistakes, saveFavorite, savePracticeRecord } from '../services/profile';
 import { WordDefinition } from '../types/word';
 import { Passage } from '../types/practice';
 import { WordDetailModal } from './WordDetailModal';
@@ -20,8 +21,16 @@ function normalizeSpacing(text: string) {
   return text.replace(/\s+/g, ' ').trim();
 }
 
+function hasAlphabet(token: string) {
+  return /[A-Za-z]/.test(token);
+}
+
+function extractPracticeTokens(text: string) {
+  return normalizeApostrophes(text).match(/[A-Za-z0-9]+(?:'[A-Za-z0-9]+)?/g) || [];
+}
+
 function countWords(text: string) {
-  return (normalizeApostrophes(text).match(/[A-Za-z]+(?:'[A-Za-z]+)?/g) || []).length;
+  return extractPracticeTokens(text).length;
 }
 
 function splitAtWordIndex(text: string, wordIndex: number) {
@@ -238,7 +247,6 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
   const [aiIndex, setAiIndex] = useState(0);
   const [attemptCounts, setAttemptCounts] = useState<number[]>([]);
   const [revealHints, setRevealHints] = useState<boolean[]>([]);
-  const hintCount = 1;
   const loadAiSentencesRef = useRef(loadAiSentences);
   const practiceRootRef = useRef<HTMLDivElement>(null);
   const questionRef = useRef<HTMLDivElement>(null);
@@ -249,13 +257,19 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
   const SCENARIOS = ['日常沟通', '社交互动', '休闲娱乐'];
 
   const [selectedWord, setSelectedWord] = useState<string | null>(null);
+  const [favoriteId, setFavoriteId] = useState('');
+  const [favoriteLoading, setFavoriteLoading] = useState(false);
+  const [favoriteError, setFavoriteError] = useState('');
+  const reportedMistakesRef = useRef<Set<string>>(new Set());
+  const sentenceStartAtRef = useRef<number>(Date.now());
+  const lastRecordedKeyRef = useRef<string>('');
   const [keyboardInset, setKeyboardInset] = useState(0);
 
   const [keyboardSoundOn, setKeyboardSoundOn] = useState(true);
 
   const current = practiceWords[index];
 
-  const scrollFocusedContentIntoView = (behavior: ScrollBehavior = 'auto') => {
+  const scrollFocusedContentIntoView = () => {
     // Disable all scrolling for Safari keyboard jitter fix
     return;
   };
@@ -272,10 +286,34 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
   }, [current, isPassageMode]);
   const expectedWords = useMemo(() => {
     const src = aiSentence || example || '';
-    const cleaned = normalizeApostrophes(src);
-    const words = cleaned.match(/[A-Za-z]+(?:'[A-Za-z]+)?/g) || [];
-    return words;
+    return extractPracticeTokens(src);
   }, [example, aiSentence]);
+
+  const currentSentence = useMemo(() => aiSentence || example || '', [aiSentence, example]);
+
+  useEffect(() => {
+    if (!currentSentence) return;
+    let active = true;
+    setFavoriteLoading(true);
+    setFavoriteError('');
+    void fetchFavorites({ sentence: currentSentence })
+      .then((data) => {
+        if (!active) return;
+        setFavoriteId(data.favorites?.[0]?.id || '');
+      })
+      .catch((e) => {
+        if (!active) return;
+        setFavoriteId('');
+        setFavoriteError(e instanceof Error ? e.message : '收藏状态获取失败');
+      })
+      .finally(() => {
+        if (!active) return;
+        setFavoriteLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentSentence]);
 
   const persistPassageTranslation = (sourceSentenceIndex: number, translation: string) => {
     if (!translation.trim()) return;
@@ -312,7 +350,12 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
   const loadSentence = async (item: AiSentenceItem | PassagePracticeItem, nextIndex: number) => {
     setAiIndex(nextIndex);
     setAiSentence(item.sentence);
-    const words = item.sentence.match(/[A-Za-z]+(?:'[A-Za-z]+)?/g) || [];
+    sentenceStartAtRef.current = Date.now();
+    lastRecordedKeyRef.current = '';
+    reportedMistakesRef.current = new Set();
+    setFavoriteId('');
+    setFavoriteError('');
+    const words = extractPracticeTokens(item.sentence);
     setSentenceInputs(words.map(() => ''));
     setLockedWords(words.map(() => false));
     setShakeWords(words.map(() => false));
@@ -399,7 +442,7 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
 
   useEffect(() => {
     inputRef.current?.focus();
-    const timer = window.setTimeout(() => scrollFocusedContentIntoView('auto'), 80);
+    const timer = window.setTimeout(() => scrollFocusedContentIntoView(), 80);
     return () => window.clearTimeout(timer);
   }, [index, checking, showAnswer, focusedIndex]);
 
@@ -507,25 +550,49 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
     }
   };
 
+  const closeWordDetailModal = () => {
+    setSelectedWord(null);
+    window.setTimeout(() => {
+      inputRef.current?.focus();
+    }, 0);
+  };
+
+  const revealCurrentHint = (targetIndex: number) => {
+    setRevealHints((prev) => prev.map((hint, idx) => (idx === targetIndex ? true : hint)));
+    setLockedWords((prev) => prev.map((locked, idx) => (idx === targetIndex ? false : locked)));
+  };
+
+  const toggleFavoriteSentence = async () => {
+    if (!currentSentence) return;
+    setFavoriteLoading(true);
+    setFavoriteError('');
+    try {
+      if (favoriteId) {
+        await deleteFavorite(favoriteId);
+        setFavoriteId('');
+      } else {
+        const result = await saveFavorite({
+          sentence: currentSentence,
+          translation: question || undefined,
+          source: isPassageMode ? 'passage' : 'ai',
+          word: isPassageMode ? undefined : current?.word,
+          passageId: isPassageMode ? passage?.id : undefined,
+          scenario: isPassageMode ? undefined : SCENARIOS[scenarioStage],
+        });
+        setFavoriteId(result.favorite?.id || '');
+      }
+    } catch (e) {
+      setFavoriteError(e instanceof Error ? e.message : '收藏操作失败');
+    } finally {
+      setFavoriteLoading(false);
+    }
+  };
+
   const restartPassagePractice = async () => {
     if (!isPassageMode || passagePracticeItems.length === 0) return;
     setChecking(false);
     setAiError('');
     await loadSentence(passagePracticeItems[0], 0);
-  };
-
-  const applyRandomHints = (countOverride?: number) => {
-    const total = expectedWords.length;
-    const n = Math.max(0, Math.min(typeof countOverride === 'number' ? countOverride : hintCount, total));
-    const indices = Array.from({ length: total }, (_, i) => i);
-    for (let i = total - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      const tmp = indices[i];
-      indices[i] = indices[j];
-      indices[j] = tmp;
-    }
-    const chosen = new Set(indices.slice(0, n));
-    setRevealHints(prev => prev.map((v, i) => v || chosen.has(i)));
   };
 
   const speak = () => {
@@ -735,7 +802,7 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
                       
                       {revealHints[i] && (
                         <div 
-                          className="absolute -top-4 left-1/2 -translate-x-1/2 cursor-pointer text-[10px] font-bold uppercase tracking-wider text-red-500 underline decoration-dotted underline-offset-4 animate-fade-in-up hover:text-red-600 sm:-top-5 sm:text-xs"
+                          className="absolute -top-4 left-1/2 -translate-x-1/2 cursor-pointer text-[10px] font-bold tracking-wider text-red-500 underline decoration-dotted underline-offset-4 animate-fade-in-up hover:text-red-600 sm:-top-5 sm:text-xs"
                           onClick={(e) => {
                             e.stopPropagation();
                             setSelectedWord(w);
@@ -772,6 +839,13 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
                             if (newVal >= 3 && !revealHints[i]) {
                               setRevealHints(rprev => rprev.map((r, idx2) => (idx2 === i ? true : r)));
                             }
+                            if (!lockedWords[i] && hasAlphabet(w)) {
+                              const key = w.toLowerCase();
+                              if (!reportedMistakesRef.current.has(key)) {
+                                reportedMistakesRef.current.add(key);
+                                void reportMistakes([w]).catch(() => {});
+                              }
+                            }
                             setLockedWords(prev => prev.map((p, idx2) => (idx2 === i ? true : p)));
                             setShakeWords(prev => prev.map((p, idx2) => (idx2 === i ? true : p)));
                             setTimeout(() => setShakeWords(prev => prev.map((p, idx2) => (idx2 === i ? false : p))), 200);
@@ -787,22 +861,13 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
                           }
                         }}
                         onKeyDown={(e) => {
-                          // Handle hint shortcut: Press '1' to reveal current word hint ONLY (no auto-fill)
-                          if (e.key === '1') {
+                          if (e.key === '`') {
                             e.preventDefault();
-                            setRevealHints(prev => prev.map((hint, idx) => idx === i ? true : hint));
-                            // Ensure the word is not locked so user can type
-                            setLockedWords(prev => prev.map((locked, idx) => idx === i ? false : locked));
+                            revealCurrentHint(i);
                             return;
                           }
-
-                          if (/^[2-9]$/.test(e.key)) {
-                            e.preventDefault();
-                            applyRandomHints(parseInt(e.key, 10));
-                            return;
-                          }
-                          const isLetter = /^[a-zA-Z]$/.test(e.key) || (e.key.length === 1 && e.key !== ' ');
-                          if (lockedWords[i] && isLetter && !revealHints[i]) {
+                          const isTypingKey = e.key.length === 1 && e.key !== ' ';
+                          if (lockedWords[i] && isTypingKey && !revealHints[i]) {
                             e.preventDefault();
                             return;
                           }
@@ -815,6 +880,20 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
                               return x === y && x.length === y.length;
                             });
                             if (allCorrect) {
+                              const recordKey = `${currentSentence}::${aiIndex}`;
+                              if (currentSentence && lastRecordedKeyRef.current !== recordKey) {
+                                lastRecordedKeyRef.current = recordKey;
+                                void savePracticeRecord({
+                                  sentence: currentSentence,
+                                  translation: question || undefined,
+                                  source: isPassageMode ? 'passage' : 'ai',
+                                  word: isPassageMode ? undefined : current?.word,
+                                  passageId: isPassageMode ? passage?.id : undefined,
+                                  scenario: isPassageMode ? undefined : SCENARIOS[scenarioStage],
+                                  durationMs: Date.now() - sentenceStartAtRef.current,
+                                  localDate: getTodayLocalDate(),
+                                }).catch(() => {});
+                              }
                               confetti({
                                 particleCount: 100,
                                 spread: 70,
@@ -876,6 +955,9 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
            )}
            {aiLoading && !isPassageMode && <span className="text-sm text-blue-600 animate-pulse">正在生成场景例句...</span>}
            {aiError && !showPassageReview && <span className="text-sm text-red-500">{aiError}</span>}
+           {favoriteError && !showPassageReview && !aiError && (
+             <span className="text-sm text-red-500">{favoriteError}</span>
+           )}
            {checking && wasWrong && !aiLoading && !aiError && !showPassageReview && (
              <span className="text-sm text-red-500 font-medium flex items-center justify-center gap-1">
                <X className="w-4 h-4" /> 答案有误，请修正
@@ -905,13 +987,25 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
           ) : (
             <>
             <button 
-              onClick={() => applyRandomHints(1)} 
+              onClick={() => revealCurrentHint(focusedIndex)} 
               className="flex items-center justify-center gap-2 rounded-lg bg-amber-100 px-4 py-2 text-sm font-medium text-amber-700 transition-colors hover:bg-amber-200"
-              title="提示一个字母 (快捷键: 1-9)"
+              title="提示当前输入 (快捷键: `)"
             >
               <Lightbulb className="w-4 h-4" />
               提示
             </button>
+
+          <button
+            onClick={() => void toggleFavoriteSentence()}
+            disabled={favoriteLoading || !currentSentence}
+            className={`flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-all hover:border-gray-300 hover:bg-gray-50 ${
+              favoriteLoading || !currentSentence ? 'cursor-not-allowed opacity-60' : ''
+            }`}
+            title={favoriteId ? '取消收藏例句' : '收藏例句'}
+          >
+            {favoriteId ? <BookmarkCheck className="w-4 h-4 text-blue-600" /> : <Bookmark className="w-4 h-4" />}
+            <span>{favoriteId ? '已收藏' : '收藏'}</span>
+          </button>
           
           <button 
             onClick={speak} 
@@ -937,14 +1031,14 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
       {/* Keyboard Shortcuts Hint */}
       {!showPassageReview && (
         <div className="mt-6 text-center text-xs leading-relaxed text-gray-400">
-          快捷键：Enter 提交 / 下一题 &middot; 数字键 1-9 提示 &middot; Space 播放发音
+          快捷键：Enter 提交 / 下一题 &middot; `` ` `` 提示当前输入 &middot; Space 播放发音
         </div>
       )}
 
       <WordDetailModal 
         word={selectedWord || ''}
         isOpen={!!selectedWord}
-        onClose={() => setSelectedWord(null)}
+        onClose={closeWordDetailModal}
       />
     </div>
   );

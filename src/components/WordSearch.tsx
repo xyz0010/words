@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { searchWord } from '../services/dictionary';
 import { useWordbook } from '../context/WordbookContext';
 import { WordDefinition } from '../types/word';
-import { Search, Bookmark, BookmarkCheck, BookOpen, Volume2, Loader2 } from 'lucide-react';
+import { Search, Bookmark, BookmarkCheck, BookOpen, Volume2, Loader2, ArrowRight } from 'lucide-react';
 import { speakWord, TTS_VOICES } from '../services/tts';
 
 interface WordSearchProps {
@@ -68,7 +68,7 @@ export function WordSearch({ onWordFound }: WordSearchProps) {
       setWordData(result);
       onWordFound?.(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to search word');
+      setError(err instanceof Error ? err.message : '查询失败，请稍后重试');
     } finally {
       setIsLoading(false);
     }
@@ -89,41 +89,8 @@ export function WordSearch({ onWordFound }: WordSearchProps) {
     navigate('/practice', { state: { initialWord: wordData.word, wordData } });
   };
 
-  return (
-    <div className="w-full max-w-3xl mx-auto space-y-5 sm:space-y-6">
-      <form onSubmit={handleSearch} className="group">
-        <div className="transform transition-all duration-200 group-hover:-translate-y-0.5">
-          <div className="relative">
-          <input
-            ref={inputRef}
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="输入要查询的单词..."
-            className="w-full rounded-2xl border-2 border-slate-200 bg-white py-4 pl-12 pr-4 text-base shadow-sm transition-all placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-500/10 sm:pl-14 sm:pr-32 sm:text-lg transform-gpu"
-            disabled={isLoading}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            spellCheck={false}
-          />
-          <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 transform text-slate-400 transition-colors group-focus-within:text-blue-500 sm:left-5 sm:h-6 sm:w-6" />
-          </div>
-          <button
-            type="submit"
-            disabled={isLoading || !searchTerm.trim()}
-            className="mt-3 flex w-full items-center justify-center rounded-xl bg-blue-600 px-6 py-3 font-medium text-white shadow-md transition-all active:scale-95 hover:bg-blue-700 hover:shadow-lg disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none sm:absolute sm:right-3 sm:top-1/2 sm:mt-0 sm:w-auto sm:-translate-y-1/2 sm:py-2"
-          >
-            {isLoading ? (
-              <div className="flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>查询中</span>
-              </div>
-            ) : '查询'}
-          </button>
-        </div>
-      </form>
-
+  const resultContent = (
+    <>
       {error && (
         <div className="p-4 bg-red-50 text-red-600 rounded-xl border border-red-100 flex items-center animate-in fade-in slide-in-from-top-2">
           <span className="mr-2">⚠️</span> {error}
@@ -200,10 +167,12 @@ export function WordSearch({ onWordFound }: WordSearchProps) {
                       </button>
                       <button
                         onClick={handlePractice}
-                        className="flex flex-1 items-center justify-center rounded-xl border border-green-200 bg-green-50 p-3 text-green-600 shadow-sm transition-all hover:border-green-300 hover:bg-green-100 sm:flex-none"
-                        title="进入例句练习"
+                        className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-medium text-white shadow-sm transition-all hover:bg-blue-700 sm:flex-none"
+                        title="开始 AI 例句练习"
                       >
-                        <BookOpen className="w-6 h-6" />
+                        <BookOpen className="w-5 h-5" />
+                        <span>开始 AI 例句练习</span>
+                        <ArrowRight className="w-4 h-4" />
                       </button>
                   </div>
               </div>
@@ -211,6 +180,10 @@ export function WordSearch({ onWordFound }: WordSearchProps) {
 
            {/* Content Area */}
            <div className="space-y-6 p-4 sm:space-y-8 sm:p-8">
+               <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-4 text-sm text-emerald-800">
+                   已为你准备好这个词的释义。下一步建议直接进入 AI 例句练习，在句子里记住它的真实用法。
+               </div>
+
                {/* Basic Meanings */}
                <div className="space-y-5 sm:space-y-6">
                    {wordData.meanings.filter(m => m.partOfSpeech !== '网络释义').map((meaning, i) => (
@@ -275,6 +248,45 @@ export function WordSearch({ onWordFound }: WordSearchProps) {
            </div>
         </div>
       )}
+    </>
+  );
+
+  return (
+    <div className="w-full space-y-5 sm:space-y-6">
+      <form onSubmit={handleSearch} className="group">
+        <div className="transform transition-all duration-200 group-hover:-translate-y-0.5">
+          <div className="relative">
+          <input
+            ref={inputRef}
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="输入你想练习的单词..."
+            className="w-full rounded-2xl border-2 border-slate-200 bg-white py-4 pl-12 pr-4 text-base shadow-sm transition-all placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-500/10 sm:pl-14 sm:pr-32 sm:text-lg transform-gpu"
+            disabled={isLoading}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+          />
+          <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 transform text-slate-400 transition-colors group-focus-within:text-blue-500 sm:left-5 sm:h-6 sm:w-6" />
+          </div>
+          <button
+            type="submit"
+            disabled={isLoading || !searchTerm.trim()}
+            className="mt-3 flex w-full items-center justify-center rounded-xl bg-blue-600 px-6 py-3 font-medium text-white shadow-md transition-all active:scale-95 hover:bg-blue-700 hover:shadow-lg disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none sm:absolute sm:right-3 sm:top-1/2 sm:mt-0 sm:w-auto sm:-translate-y-1/2 sm:py-2"
+          >
+            {isLoading ? (
+              <div className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>准备中</span>
+              </div>
+            ) : '生成练习'}
+          </button>
+        </div>
+      </form>
+
+      {resultContent}
     </div>
   );
 }

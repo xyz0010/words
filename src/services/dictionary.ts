@@ -10,7 +10,7 @@ export async function searchWord(word: string): Promise<WordDefinition> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ q: word, from, to, mode: 'dict' }),
     });
-    if (!res.ok) throw new Error('API error');
+    if (!res.ok) throw new Error('词典服务暂时不可用，请稍后再试');
     const data = await res.json();
     const zh = typeof data?.translation === 'string' && data.translation ? data.translation : '';
     
@@ -164,7 +164,9 @@ export async function searchWord(word: string): Promise<WordDefinition> {
 
     // Fallback if no basic info found or meanings is empty
     if (meanings.length === 0) {
-       if (!zh) throw new Error('Translation not found');
+       if (!zh) {
+         throw new Error(hasChinese ? '没有找到对应的英文表达，请换个词试试' : '没有找到这个单词，请检查拼写后再试');
+       }
        meanings.push({
           partOfSpeech: hasChinese ? 'zh→en' : 'en→zh',
           definitions: [{ definition: zh }]
@@ -184,6 +186,6 @@ export async function searchWord(word: string): Promise<WordDefinition> {
     if (error instanceof Error) {
       throw error;
     }
-    throw new Error('Failed to search word');
+    throw new Error('查询失败，请稍后重试');
   }
 }

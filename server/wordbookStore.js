@@ -1,18 +1,6 @@
-import { mkdir, readFile, writeFile } from 'fs/promises';
-import path from 'path';
+import { getDb, getDbFilePath } from './db.js';
 
 const DEFAULT_USER_ID = (process.env.DEFAULT_WORDS_USER_ID || 'demo-user').trim() || 'demo-user';
-const DATA_DIR = process.env.WORDS_DATA_DIR
-  ? path.resolve(process.env.WORDS_DATA_DIR)
-  : path.resolve(process.cwd(), 'data');
-const DATA_FILE = path.join(DATA_DIR, 'wordbooks.json');
-
-function createEmptyStore() {
-  return {
-    users: {},
-    updatedAt: new Date().toISOString(),
-  };
-}
 
 function normalizeString(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -81,46 +69,22 @@ function sanitizeWord(word) {
   return sanitized;
 }
 
-async function ensureStoreFile() {
-  await mkdir(DATA_DIR, { recursive: true });
-  try {
-    await readFile(DATA_FILE, 'utf8');
-  } catch {
-    await writeFile(DATA_FILE, JSON.stringify(createEmptyStore(), null, 2), 'utf8');
-  }
-}
-
-async function readStore() {
-  await ensureStoreFile();
-  try {
-    const raw = await readFile(DATA_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || !parsed.users || typeof parsed.users !== 'object') {
-      return createEmptyStore();
-    }
-    return parsed;
-  } catch {
-    return createEmptyStore();
-  }
-}
-
-async function writeStore(store) {
-  await ensureStoreFile();
-  const nextStore = {
-    ...store,
-    updatedAt: new Date().toISOString(),
-  };
-  await writeFile(DATA_FILE, JSON.stringify(nextStore, null, 2), 'utf8');
-}
-
 export function resolveUserId(inputUserId) {
   return normalizeString(inputUserId) || DEFAULT_USER_ID;
 }
 
 export async function getWordbook(userIdInput) {
   const userId = resolveUserId(userIdInput);
-  const store = await readStore();
-  const words = Array.isArray(store.users?.[userId]?.words) ? store.users[userId].words : [];
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT payload_json AS payloadJson
+       FROM wordbook_words
+       WHERE user_id = ?
+       ORDER BY COALESCE(date_added, '') DESC`
+    )
+    .all(userId);
+  const words = rows.map((row) => JSON.parse(row.payloadJson));
   return { userId, words };
 }
 
@@ -131,15 +95,17 @@ export async function upsertWord(userIdInput, wordInput) {
     throw new Error('invalid_word_payload');
   }
 
-  const store = await readStore();
-  const currentWords = Array.isArray(store.users?.[userId]?.words) ? store.users[userId].words : [];
-  const nextWords = [
-    sanitizedWord,
-    ...currentWords.filter((item) => normalizeString(item?.word).toLowerCase() !== sanitizedWord.word.toLowerCase()),
-  ];
-
-  store.users[userId] = { words: nextWords };
-  await writeStore(store);
+  const db = getDb();
+  db.prepare(
+    `INSERT OR REPLACE INTO wordbook_words (user_id, word_key, word, payload_json, date_added)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(
+    userId,
+    sanitizedWord.word.toLowerCase(),
+    sanitizedWord.word,
+    JSON.stringify(sanitizedWord),
+    sanitizedWord.dateAdded || null
+  );
   return sanitizedWord;
 }
 
@@ -153,40 +119,34 @@ export async function importWords(userIdInput, wordsInput) {
     return { userId, words: [] };
   }
 
-  const store = await readStore();
-  const currentWords = Array.isArray(store.users?.[userId]?.words) ? store.users[userId].words : [];
-  const byWord = new Map();
-
-  for (const item of currentWords) {
-    const key = normalizeString(item?.word).toLowerCase();
-    if (key) byWord.set(key, item);
-  }
-
-  for (const item of sanitizedWords) {
-    byWord.set(item.word.toLowerCase(), item);
-  }
-
-  const nextWords = Array.from(byWord.values()).sort((a, b) => {
-    return new Date(b.dateAdded || 0).getTime() - new Date(a.dateAdded || 0).getTime();
+  const db = getDb();
+  const insertWord = db.prepare(
+    `INSERT OR REPLACE INTO wordbook_words (user_id, word_key, word, payload_json, date_added)
+     VALUES (?, ?, ?, ?, ?)`
+  );
+  const tx = db.transaction((items) => {
+    for (const item of items) {
+      insertWord.run(
+        userId,
+        item.word.toLowerCase(),
+        item.word,
+        JSON.stringify(item),
+        item.dateAdded || null
+      );
+    }
   });
-
-  store.users[userId] = { words: nextWords };
-  await writeStore(store);
-  return { userId, words: nextWords };
+  tx(sanitizedWords);
+  return getWordbook(userId);
 }
 
 export async function deleteWord(userIdInput, wordInput) {
   const userId = resolveUserId(userIdInput);
   const targetWord = normalizeString(wordInput).toLowerCase();
-  const store = await readStore();
-  const currentWords = Array.isArray(store.users?.[userId]?.words) ? store.users[userId].words : [];
-  const nextWords = currentWords.filter((item) => normalizeString(item?.word).toLowerCase() !== targetWord);
-
-  store.users[userId] = { words: nextWords };
-  await writeStore(store);
-  return { userId, words: nextWords };
+  const db = getDb();
+  db.prepare(`DELETE FROM wordbook_words WHERE user_id = ? AND word_key = ?`).run(userId, targetWord);
+  return getWordbook(userId);
 }
 
 export function getWordbookDataFilePath() {
-  return DATA_FILE;
+  return getDbFilePath();
 }
