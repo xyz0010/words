@@ -141,8 +141,8 @@ cp .env.example .env.local
 然后补齐你当前在用的配置，例如：
 
 ```env
-COZE_TOKEN=...
-COZE_WORKFLOW_ID=...
+DEEPSEEK_API_KEY=...
+DEEPSEEK_MODEL=deepseek-chat
 YOUDAO_APP_KEY=...
 YOUDAO_APP_SECRET=...
 DEFAULT_WORDS_USER_ID=demo-user
@@ -151,20 +151,11 @@ WORDS_DATA_DIR=/app/data
 WORDS_APP_PORT=8080
 ```
 
-如果你的 Coze `PAT Token` 经常失效，建议改成 OAuth JWT 自动续期，增加这些配置：
-
-```env
-COZE_OAUTH_CLIENT_ID=你的OAuth应用ID
-COZE_OAUTH_KID=你的公钥指纹
-COZE_OAUTH_PRIVATE_KEY=你的PEM私钥内容
-COZE_OAUTH_TOKEN_TTL=3600
-```
-
 说明：
 
-- 当前项目已支持 Coze OAuth JWT 自动换取 `access_token`
-- 会在服务端内存中缓存 token，并在过期前自动重新申请
-- 如果同时配置了 OAuth 和旧的 `COZE_TOKEN`，会优先使用 OAuth
+- `DEEPSEEK_API_KEY` 只放在服务端环境变量中，不要写到前端代码
+- `DEEPSEEK_MODEL` 不填时默认使用 `deepseek-chat`
+- 如需自定义网关地址，可额外设置 `DEEPSEEK_BASE_URL`
 
 ### 3. 启动容器
 

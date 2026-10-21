@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { WordDefinition } from '../types/word';
 import { useWordbook } from '../context/WordbookContext';
 import { Download, Filter, X, MessageSquare, ArrowDownAZ, ArrowUpAZ, Calendar, ChevronDown, ChevronUp } from 'lucide-react';
+
+const PAGE_SIZE = 20;
 
 interface WordbookManagerProps {
   onPracticeWord?: (word: WordDefinition) => void;
@@ -12,6 +14,7 @@ export function WordbookManager({ onPracticeWord }: WordbookManagerProps) {
   const [showFilters, setShowFilters] = useState(false);
   const [sortType, setSortType] = useState<'date_desc' | 'date_asc' | 'az' | 'za'>('date_desc');
   const [expandedWords, setExpandedWords] = useState<Record<string, boolean>>({});
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   const toggleExpandWord = (word: string) => {
     const key = word.toLowerCase();
@@ -57,6 +60,12 @@ export function WordbookManager({ onPracticeWord }: WordbookManagerProps) {
         return 0;
     }
   });
+
+  const visibleWords = filteredWords.slice(0, visibleCount);
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [state.filter.searchTerm, state.filter.dateFrom, state.filter.dateTo, sortType, state.words.length]);
 
   const exportToCSV = () => {
     const headers = ['单词', '音标', '词性', '定义', '添加日期'];
@@ -218,7 +227,7 @@ export function WordbookManager({ onPracticeWord }: WordbookManagerProps) {
         )}
 
         <div className="mb-4 text-sm text-gray-600">
-          共 {filteredWords.length} 个单词
+          已显示 {Math.min(visibleWords.length, filteredWords.length)} / {filteredWords.length} 个单词
         </div>
 
         {syncError && (
@@ -240,7 +249,7 @@ export function WordbookManager({ onPracticeWord }: WordbookManagerProps) {
           </div>
         ) : (
           <div className="grid gap-4">
-            {filteredWords.map((word) => (
+            {visibleWords.map((word) => (
               <div key={word.word} className="rounded-lg border transition-shadow hover:shadow-md">
                 <button
                   type="button"
@@ -293,6 +302,14 @@ export function WordbookManager({ onPracticeWord }: WordbookManagerProps) {
                 )}
               </div>
             ))}
+            {visibleCount < filteredWords.length && (
+              <button
+                onClick={() => setVisibleCount((prev) => prev + PAGE_SIZE)}
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 transition hover:bg-slate-50"
+              >
+                加载更多单词
+              </button>
+            )}
           </div>
         )}
       </div>

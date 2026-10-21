@@ -40,7 +40,6 @@ export async function fetchAiExamples(
   const data = await res.json();
   const sentences: AiSentenceItem[] = Array.isArray(data?.sentences) ? data.sentences : [];
   const source: string | undefined = data?.source;
-  const latestContent: string | undefined = data?.latestContent;
   const raw: string | undefined = data?.raw;
   const debug: any = data?.debug;
   if (!sentences.length) {
@@ -54,13 +53,13 @@ export async function fetchAiExamples(
       } catch {}
     }
     if (source === 'env_missing') {
-      throw new Error('未配置 AI 鉴权环境变量，请在 .env.local 设置 Coze OAuth JWT 或 COZE_TOKEN');
+      throw new Error('未配置 AI 鉴权环境变量，请在 .env.local 设置 DEEPSEEK_API_KEY');
     }
     if (source === 'internal_error') {
       throw new Error('代理内部错误，稍后重试或检查开发服务器日志');
     }
-    if (source === 'coze_error') {
-      throw new Error('AI服务返回错误，请检查 token 与 workflow/app 参数');
+    if (source === 'deepseek_error') {
+      throw new Error('DeepSeek 服务返回错误，请检查 API Key、模型名或服务地址配置');
     }
     throw new Error('未获取到AI例句');
   }

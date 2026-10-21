@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import tsconfigPaths from "vite-tsconfig-paths";
 import type { Plugin } from 'vite';
 import crypto from 'node:crypto';
-import { resolveCozeAuthHeader } from './server/cozeOAuth.js';
+import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import {
   createSession,
   extractBearerToken,
@@ -76,11 +76,119 @@ async function fetchSentenceTranslation(q: string): Promise<string> {
   return lines.flat().map((item: any) => item?.tgt || '').join('').trim();
 }
 
-function cozeExamplesPlugin(env: Record<string, string>): Plugin {
-  const COZE_BASE_URL = (env.COZE_BASE_URL || 'https://api.coze.cn').trim();
-  const COZE_WORKFLOW_ID = (env.COZE_WORKFLOW_ID || '').trim();
+function extractJsonPayload(text: string): any {
+  const cleaned = String(text || '')
+    .trim()
+    .replace(/^```[a-zA-Z]*\n?/, '')
+    .replace(/```$/, '')
+    .trim();
+
+  if (!cleaned) return null;
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {}
+
+  const arrayStart = cleaned.indexOf('[');
+  const arrayEnd = cleaned.lastIndexOf(']');
+  if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
+    try {
+      return JSON.parse(cleaned.slice(arrayStart, arrayEnd + 1));
+    } catch {}
+  }
+
+  const objectStart = cleaned.indexOf('{');
+  const objectEnd = cleaned.lastIndexOf('}');
+  if (objectStart !== -1 && objectEnd !== -1 && objectEnd > objectStart) {
+    try {
+      return JSON.parse(cleaned.slice(objectStart, objectEnd + 1));
+    } catch {}
+  }
+
+  return null;
+}
+
+function parseAiSentences(content: string, count: number): Array<{ sentence: string; translation?: string }> {
+  const parsed = extractJsonPayload(content);
+  const normalize = (arr: any[]) =>
+    arr
+      .slice(0, count)
+      .map((it: any) => {
+        if (typeof it === 'string') return { sentence: it };
+        if (!it || typeof it !== 'object') return { sentence: '' };
+        const eng = String(it.english ?? it.en ?? it.sentence ?? '');
+        const zh = it.chinese ?? it.zh ?? it.cn ?? it.translation ?? '';
+        return { sentence: eng, translation: typeof zh === 'string' ? zh : '' };
+      })
+      .filter((s: { sentence: string }) => s.sentence);
+
+  if (Array.isArray(parsed)) return normalize(parsed);
+  if (parsed && typeof parsed === 'object' && Array.isArray(parsed.sentences)) return normalize(parsed.sentences);
+  if (parsed && typeof parsed === 'object' && Array.isArray(parsed.data)) return normalize(parsed.data);
+  if (parsed && typeof parsed === 'object' && Array.isArray(parsed.example_sentences)) return normalize(parsed.example_sentences);
+  if (parsed && typeof parsed === 'object' && (parsed.english || parsed.chinese)) {
+    const one = {
+      sentence: String(parsed.english || ''),
+      translation: typeof parsed.chinese === 'string' ? parsed.chinese : '',
+    };
+    return one.sentence ? [one] : [];
+  }
+  if (typeof parsed === 'string') return [{ sentence: parsed }];
+  return [];
+}
+
+function buildExampleMessages(word: string, _count: number, hard: string) {
+  const scene = hard || '通用';
+  return [
+    {
+      role: 'system',
+      content: `# 角色
+你是英语口语例句生成器，专为零基础到初级的中国学习者服务。
+
+# 任务
+根据输入的单词和场景，生成10条超简单、超短的口语化例句，附中文翻译。
+
+# 核心规则
+1. 必须是日常说话的方式，不是教科书、不是书面语
+2. 句子尽量短，5-8个词为佳，不超过10个词
+3. 用口语表达，不用正式表达：
+   - 用 "I'm gonna" 不用 "I am going to"
+   - 用 "Sounds good" 不用 "That sounds like a good idea"
+   - 用 "It's kind of" 不用 "It is somewhat"
+   - 用 "I don't know" 不用 "I am unaware"
+4. 允许出现口语高频词：like、kind of、stuff、actually、basically、you know、I mean
+5. 中文翻译也要口语化，说人话，不要翻译腔
+
+# 禁止
+- 禁止教科书腔（"How do you do?" "I am fine, thank you."）
+- 禁止书面语（"Furthermore" "Nevertheless" "It is worth noting that"）
+- 禁止超过10个词的长句
+- 禁止脱离生活的抽象例句
+
+# 输出要求
+只返回 JSON，不要输出 Markdown 代码块、解释或额外文本。`,
+    },
+    {
+      role: 'user',
+      content: `# 输入
+单词：${word}
+场景：${scene}
+
+# 输出格式
+{
+  "sentences": [
+    { "sentence": "英文例句", "translation": "中文翻译" }
+  ]
+}`,
+    },
+  ];
+}
+
+function deepseekExamplesPlugin(env: Record<string, string>): Plugin {
+  const DEEPSEEK_BASE_URL = (env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').trim();
+  const DEEPSEEK_MODEL = (env.DEEPSEEK_MODEL || 'deepseek-chat').trim();
   return {
-    name: 'coze-examples-proxy',
+    name: 'deepseek-examples-proxy',
     configureServer(server) {
       server.middlewares.use('/api/ai/examples', async (req, res, next) => {
         if (req.method !== 'POST') return next();
@@ -90,9 +198,8 @@ function cozeExamplesPlugin(env: Record<string, string>): Plugin {
           try {
             const payload = JSON.parse(body || '{}');
             const word = String(payload.word || '').trim();
-            const count = Number(payload.count || 5);
+            const count = Math.max(1, Math.min(10, Number(payload.count || 5)));
             const devToken = typeof payload.dev_token === 'string' ? payload.dev_token.trim() : '';
-            const nonce = typeof payload.nonce === 'number' ? payload.nonce : Date.now();
             let hard = '';
             try {
               const u = new URL(req.url || '', 'http://local');
@@ -106,180 +213,46 @@ function cozeExamplesPlugin(env: Record<string, string>): Plugin {
               res.setHeader('Content-Type', 'application/json');
               return res.end(JSON.stringify({ error: 'word_required' }));
             }
-            const auth = await resolveCozeAuthHeader({ env, devToken });
-            if (!auth.token || !COZE_WORKFLOW_ID) {
+            const apiKey = devToken || (env.DEEPSEEK_API_KEY || '').trim();
+            if (!apiKey) {
               res.statusCode = 200;
               res.setHeader('Content-Type', 'application/json');
               return res.end(JSON.stringify({ sentences: [], source: 'env_missing' }));
             }
-            const url = `${COZE_BASE_URL}/v1/workflow/stream_run`;
-            // Construct a prompt to enforce JSON format
-            const prompt = `单词：${word}
-场景：${hard}
-数量：${count}
-请生成 ${count} 个例句。
-输出格式要求：请严格返回 JSON 格式，不要包含 Markdown 代码块标记。
-JSON 结构如下：
-{
-  "sentences": [
-    { "sentence": "英文例句", "translation": "中文翻译" },
-    ...
-  ]
-}`;
+            const url = `${DEEPSEEK_BASE_URL.replace(/\/$/, '')}/chat/completions`;
             const resp = await fetch(url, {
               method: 'POST',
               headers: {
-                Authorization: `Bearer ${auth.token}`,
+                Authorization: `Bearer ${apiKey}`,
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
-                workflow_id: COZE_WORKFLOW_ID,
-                parameters: { input: prompt, nonce, hard },
+                model: DEEPSEEK_MODEL,
+                messages: buildExampleMessages(word, count, hard),
+                temperature: 0.7,
+                stream: false,
               }),
             });
             const raw = await resp.text();
             let latestContent = '';
-            const lines = raw.split('\n');
-            for (const line of lines) {
-              const l = line.trim();
-              try {
-                if (l.startsWith('data:')) {
-                  const obj = JSON.parse(l.slice(5).trim());
-                  if (obj?.content) latestContent = obj.content;
-                } else if (l.startsWith('{')) {
-                  const obj = JSON.parse(l);
-                  if (obj?.content) latestContent = obj.content;
-                } else if (l.includes('content :')) {
-                  // loose format like: content : {"output":"..."}
-                  const idx = l.indexOf('content :');
-                  const part = l.slice(idx + 'content :'.length).trim();
-                  try {
-                    const obj = JSON.parse(part);
-                    if (obj?.output) latestContent = JSON.stringify(obj);
-                  } catch {}
-                }
-              } catch {}
-            }
-            let sentences: Array<{ sentence: string; translation?: string }> = [];
             try {
-              let outputStr: string | undefined;
-              if (latestContent) {
-                // latestContent may be a JSON string or an object-like string
-                let outer: any = latestContent;
-                if (typeof outer === 'string') {
-                  try { outer = JSON.parse(outer); } catch {}
-                }
-                if (outer && typeof outer === 'object' && typeof outer.output === 'string') {
-                  outputStr = outer.output;
-                }
-              } else {
-                // fallback: try parse entire raw for output
-                try {
-                  const maybe = JSON.parse(raw);
-                  if (maybe?.output && typeof maybe.output === 'string') {
-                    outputStr = maybe.output;
-                  } else if (maybe?.content) {
-                    let outer2: any = maybe.content;
-                    if (typeof outer2 === 'string') {
-                      try { outer2 = JSON.parse(outer2); } catch {}
-                    }
-                    if (outer2?.output && typeof outer2.output === 'string') {
-                      outputStr = outer2.output;
-                    }
-                  }
-                } catch {}
-              }
-              if (outputStr) {
-                let cleaned = String(outputStr).trim();
-                if (cleaned.startsWith('```')) {
-                  cleaned = cleaned.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
-                }
-                let inner: any;
-                try {
-                  inner = JSON.parse(cleaned);
-                } catch {
-                  const a = cleaned.indexOf('[');
-                  const b = cleaned.lastIndexOf(']');
-                  if (a !== -1 && b !== -1 && b > a) {
-                    const arrStr = cleaned.slice(a, b + 1);
-                    try { inner = JSON.parse(arrStr); } catch {}
-                  }
-                  if (!inner) {
-                    const c = cleaned.indexOf('{');
-                    const d = cleaned.lastIndexOf('}');
-                    if (c !== -1 && d !== -1 && d > c) {
-                      const objStr = cleaned.slice(c, d + 1);
-                      try { inner = JSON.parse(objStr); } catch {}
-                    }
-                  }
-                }
-                if (Array.isArray(inner)) {
-                  const arr = inner;
-                  sentences = arr.slice(0, count).map((it: any) => {
-                    if (typeof it === 'string') return { sentence: it };
-                    if (it && typeof it === 'object') {
-                      if (it.english || it.chinese) {
-                        return { sentence: String(it.english || ''), translation: typeof it.chinese === 'string' ? it.chinese : '' };
-                      }
-                      return { sentence: String(it.sentence || ''), translation: typeof it.translation === 'string' ? it.translation : '' };
-                    }
-                    return { sentence: '' };
-                  }).filter((s: { sentence: string }) => s.sentence);
-                } else if (Array.isArray(inner.sentences)) {
-                  const arr = inner.sentences;
-                  sentences = arr.slice(0, count).map((it: any) => {
-                    if (typeof it === 'string') return { sentence: it };
-                    if (it && typeof it === 'object') {
-                      if (it.english || it.chinese) {
-                        return { sentence: String(it.english || ''), translation: typeof it.chinese === 'string' ? it.chinese : '' };
-                      }
-                      return { sentence: String(it.sentence || ''), translation: typeof it.translation === 'string' ? it.translation : '' };
-                    }
-                    return { sentence: '' };
-                  }).filter((s: { sentence: string }) => s.sentence);
-                } else if (inner && typeof inner === 'object' && Array.isArray(inner.data)) {
-                  const arr = inner.data;
-                  sentences = arr.slice(0, count).map((it: any) => {
-                    if (typeof it === 'string') return { sentence: it };
-                    if (it && typeof it === 'object') {
-                      const eng = String(it.english ?? it.en ?? it.sentence ?? '');
-                      const zh = it.chinese ?? it.zh ?? it.cn ?? it.translation ?? '';
-                      return { sentence: eng, translation: typeof zh === 'string' ? zh : '' };
-                    }
-                    return { sentence: '' };
-                  }).filter((s: { sentence: string }) => s.sentence);
-                } else if (inner && typeof inner === 'object' && Array.isArray(inner.example_sentences)) {
-                  const arr = inner.example_sentences;
-                  sentences = arr.slice(0, count).map((it: any) => {
-                    if (typeof it === 'string') return { sentence: it };
-                    if (it && typeof it === 'object') {
-                      const eng = String(it.english ?? it.en ?? it.sentence ?? '');
-                      const zh = it.chinese ?? it.zh ?? it.cn ?? it.translation ?? '';
-                      return { sentence: eng, translation: typeof zh === 'string' ? zh : '' };
-                    }
-                    return { sentence: '' };
-                  }).filter((s: { sentence: string }) => s.sentence);
-                } else if (inner && typeof inner === 'object' && (inner.english || inner.chinese)) {
-                  const item = { sentence: String(inner.english || ''), translation: typeof inner.chinese === 'string' ? inner.chinese : '' };
-                  sentences = item.sentence ? [item] : [];
-                } else if (typeof inner === 'string') {
-                  sentences = [{ sentence: inner }];
-                }
-              }
+              const data = JSON.parse(raw);
+              latestContent = String(data?.choices?.[0]?.message?.content || '').trim();
             } catch {}
+            const sentences = parseAiSentences(latestContent, count);
+            const masked = (s: string) => (s.length > 12 ? `${s.slice(0,6)}...${s.slice(-6)}` : s);
             res.statusCode = 200;
             res.setHeader('Content-Type', 'application/json');
-            const masked = (s: string) => (s.length > 12 ? `${s.slice(0,6)}...${s.slice(-6)}` : s);
             return res.end(JSON.stringify({
               sentences,
-              source: 'coze',
+              source: resp.ok ? 'deepseek' : 'deepseek_error',
               latestContent,
               raw,
               debug: {
                 url,
-                workflow: COZE_WORKFLOW_ID,
-                token_source: auth.source,
-                token_head: masked(auth.token),
+                model: DEEPSEEK_MODEL,
+                token_source: devToken ? 'payload' : 'env',
+                token_head: masked(apiKey),
                 status: resp.status,
                 statusText: resp.statusText
               }
@@ -290,6 +263,59 @@ JSON 结构如下：
             return res.end(JSON.stringify({ sentences: [], source: 'internal_error' }));
           }
         });
+      });
+    },
+  };
+}
+
+function edgeTtsPlugin(): Plugin {
+  return {
+    name: 'edge-tts-proxy',
+    configureServer(server) {
+      server.middlewares.use('/api/tts', async (req, res, next) => {
+        if (req.method !== 'GET') return next();
+
+        let text = '';
+        let voice = 'en-US-AriaNeural';
+        try {
+          const u = new URL(req.url || '', 'http://local');
+          text = (u.searchParams.get('text') || '').trim();
+          voice = (u.searchParams.get('voice') || voice).trim();
+        } catch {}
+
+        if (!text) {
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json');
+          return res.end(JSON.stringify({ error: 'text is required' }));
+        }
+
+        try {
+          const tts = new MsEdgeTTS();
+          await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+
+          const chunks: Buffer[] = [];
+          const { audioStream } = tts.toStream(text.slice(0, 1000));
+
+          await new Promise<void>((resolve, reject) => {
+            audioStream.on('data', (chunk: Buffer) => chunks.push(chunk));
+            audioStream.on('end', () => resolve());
+            audioStream.on('error', (err: Error) => reject(err));
+          });
+
+          const audioBuffer = Buffer.concat(chunks);
+
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'audio/mpeg');
+          res.setHeader('Content-Length', String(audioBuffer.length));
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+          res.setHeader('X-Voice', voice);
+          return res.end(audioBuffer);
+        } catch (error) {
+          console.error('Edge TTS error:', error);
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          return res.end(JSON.stringify({ error: 'TTS synthesis failed' }));
+        }
       });
     },
   };
@@ -801,7 +827,8 @@ export default defineConfig(({ mode }) => {
     }), 
     wordbookApiPlugin(),
     youdaoTranslatePlugin(env),
-    cozeExamplesPlugin(env),
+    edgeTtsPlugin(),
+    deepseekExamplesPlugin(env),
     tsconfigPaths()
   ],
 }

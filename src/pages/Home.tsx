@@ -3,6 +3,7 @@ import { WordbookManager } from '../components/WordbookManager';
 import { PassageLibrary } from '../components/PassageLibrary';
 import { AuthDialog } from '../components/AuthDialog';
 import { ProfileCenter } from '../components/ProfileCenter';
+import { HomePracticeDemo } from '../components/HomePracticeDemo';
 import { useAuth } from '../context/AuthContext';
 import { BookOpen, Search as SearchIcon, LogIn, LogOut, User } from 'lucide-react';
 import { useState, useEffect } from 'react';
@@ -15,7 +16,7 @@ export default function Home() {
 
   // Safari mobile keyboard jitter fix - only prevent elastic overscroll
   useEffect(() => {
-    const preventOverscroll = (e: TouchEvent) => {
+    const preventOverscroll = () => {
       if (window.scrollY <= 0) {
         window.scrollTo(0, 1);
       }
@@ -36,10 +37,13 @@ export default function Home() {
           <div className="max-w-6xl mx-auto px-4 py-4 sm:py-6">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-col gap-4 sm:flex-1 sm:flex-row sm:items-center sm:justify-between">
-                <h1 className="flex items-center gap-3 text-2xl font-bold text-gray-800 sm:text-3xl">
-                  <BookOpen className="h-7 w-7 text-blue-600 sm:h-8 sm:w-8" />
-                  背单词助手
-                </h1>
+                <div>
+                  <h1 className="flex items-center gap-3 text-2xl font-bold text-gray-800 sm:text-3xl">
+                    <BookOpen className="h-7 w-7 text-blue-600 sm:h-8 sm:w-8" />
+                    AI例句练习
+                  </h1>
+                  <p className="mt-2 text-sm text-slate-500 sm:text-base">先理解，再输入，再真正把单词用出来。</p>
+                </div>
 
                 <div className="flex flex-col gap-3 sm:items-end">
                   <div className="grid w-full grid-cols-4 rounded-lg bg-gray-100 p-1 sm:w-auto sm:min-w-[34rem]">
@@ -52,7 +56,7 @@ export default function Home() {
                       }`}
                     >
                       <SearchIcon className="w-4 h-4" />
-                      单词查询
+                      开始练习
                     </button>
                     <button
                       onClick={() => setActiveTab('wordbook')}
@@ -121,11 +125,23 @@ export default function Home() {
         <main className="max-w-6xl mx-auto px-4 py-6 sm:py-8">
           {activeTab === 'search' ? (
             <div className="space-y-6 sm:space-y-8">
-              <div className="text-center">
-                <h2 className="mb-3 text-xl font-semibold text-gray-800 sm:mb-4 sm:text-2xl">查询单词</h2>
-                <p className="text-sm text-gray-600 sm:text-base">输入英文单词，获取详细释义和例句</p>
+              <div className="mx-auto max-w-4xl rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm sm:px-6 sm:py-6">
+                <div className="text-center">
+                  <h2 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+                    让单词从“认识”变成“会用”
+                  </h2>
+                  <p className="mt-3 text-sm leading-7 text-slate-600 sm:text-base">
+                    AI 生成真实场景例句，帮你把单词从认识练到会用
+                  </p>
+                </div>
+                <div className="mt-5">
+                  <WordSearch />
+                </div>
               </div>
-              <WordSearch />
+
+              <div className="mx-auto max-w-4xl">
+                <HomePracticeDemo />
+              </div>
             </div>
           ) : activeTab === 'wordbook' ? (
             <div className="space-y-6 sm:space-y-8">

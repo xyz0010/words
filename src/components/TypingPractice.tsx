@@ -802,7 +802,7 @@ export function TypingPractice({ startWord, initialWordData, practiceMode, passa
                       
                       {revealHints[i] && (
                         <div 
-                          className="absolute -top-4 left-1/2 -translate-x-1/2 cursor-pointer text-[10px] font-bold uppercase tracking-wider text-red-500 underline decoration-dotted underline-offset-4 animate-fade-in-up hover:text-red-600 sm:-top-5 sm:text-xs"
+                          className="absolute -top-4 left-1/2 -translate-x-1/2 cursor-pointer text-[10px] font-bold tracking-wider text-red-500 underline decoration-dotted underline-offset-4 animate-fade-in-up hover:text-red-600 sm:-top-5 sm:text-xs"
                           onClick={(e) => {
                             e.stopPropagation();
                             setSelectedWord(w);
